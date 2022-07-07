@@ -1,74 +1,17 @@
 import numpy as np
 import torch
 import torch.nn as nn
-import random
-import torch.nn.functional as F
+try:
+    from . import networks as nets
+except:
+    import networks as nets
+from torch.distributions import Categorical
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-class Net(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dim=256):
-        super().__init__()
-
-        self.layer = nn.Sequential(nn.Linear(state_dim, hidden_dim), nn.ReLU(),
-                                   nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-                                   nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-                                   nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-                                   )
-
-        self.q = nn.Linear(hidden_dim, action_dim)
-
-    def forward(self, obs):
-        l = self.layer(obs)
-        q_values = self.q(l)
-
-        return q_values
+numpy_to_cuda = lambda numpy_array: torch.from_numpy(numpy_array).float().to(DEVICE)
 
 
-class DuellingNet(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dim=256):
-        super().__init__()
-
-        self.layer = nn.Sequential(nn.Linear(state_dim, hidden_dim), nn.ReLU(),
-                                   nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-                                   nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-                                   nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-                                   )
-
-        self.a = nn.Linear(hidden_dim, action_dim)
-        self.v = nn.Linear(hidden_dim, 1)
-
-    def forward(self, obs):
-        l = self.layer(obs)
-        advantages = self.a(l)
-        value = self.v(l)
-
-        q_values = value + (advantages - advantages.mean())
-        return q_values
-
-
-class ReplayBuffer:
-    def __init__(self, capacity):
-        self.capacity = capacity
-        self.buffer = []
-        self.position = 0
-
-    def push(self, state, action, reward, next_state, done):
-        if len(self.buffer) < self.capacity:
-            self.buffer.append(None)
-        self.buffer[self.position] = (state, action, reward, next_state, done)
-        self.position = (self.position + 1) % self.capacity
-
-    def sample(self, batch_size):
-        batch = random.sample(self.buffer, batch_size)
-        state, action, reward, next_state, done = map(np.stack, zip(*batch))
-        return state, action, reward, next_state, done
-
-    def __len__(self):
-        return len(self.buffer)
-
-
-class agent:
+class DuellingDQN:
     def __init__(self, state_dim, action_dim, gamma=0.96, alpha=0.0025, tau=0.001):
 
         self.target_net = self.create_net(state_dim, action_dim).to(DEVICE)
@@ -82,11 +25,12 @@ class agent:
         self.tau = tau
         self.epsilon = lambda t: 0.001 + (10 - 0.01) * np.exp(-0.001 * t)
 
-    def create_net(self, s_dim, a_dim, duelling=True):
+    @staticmethod
+    def create_net(s_dim, a_dim, duelling=True):
         if duelling:
-            net = DuellingNet(s_dim, a_dim)
+            net = nets.DuellingNet(s_dim, a_dim)
         else:
-            net = Net(s_dim, a_dim)
+            net = nets.Net(s_dim, a_dim)
         return net
 
     def get_action(self, state):
@@ -101,14 +45,12 @@ class agent:
     def update(self, batch_sample):
 
         state, action, reward, next_state, done = batch_sample
+
         states = torch.Tensor(state).to(DEVICE)
-
         actions = torch.tensor(action, dtype=torch.long).unsqueeze(1).to(DEVICE)
-
-        state_qs = self.policy_net(states).gather(1, actions)
-
         non_final_states = torch.Tensor(next_state).to(DEVICE)
 
+        state_qs = self.policy_net(states).gather(1, actions)
         next_state_values = self.target_net(non_final_states).max(1)[0].detach()
         next_state_values[done] = 0
 
@@ -118,93 +60,124 @@ class agent:
 
         self.optimizer.zero_grad()
         loss.backward()
-        #         for param in self.policy_net.parameters():
-        #             param.grad.data.clamp_(-1, 1)
+        nn.utils.clip_grad_norm(self.policy_net.parameters(), max_norm=2)
         self.optimizer.step()
 
         for target_param, param in zip(self.target_net.parameters(), self.policy_net.parameters()):
             target_param.data.copy_(self.tau * param + (1 - self.tau) * target_param)
+        return loss
 
+    def online_update(self, time_step):
+        raise NotImplementedError
 
-class PolicyNet(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dim=256):
-        super(PolicyNet, self).__init__()
-        self.layer = nn.Sequential(nn.Linear(state_dim, hidden_dim), nn.ReLU(),
-                                   nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-                                   nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-                                   nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-                                   )
-
-        self.a = nn.Linear(hidden_dim, action_dim)
-
-    def forward(self, obs):
-        l = self.layer(obs)
-        out = self.a(l)
-        prefs = F.softmax(out, dim=-1)
-
-        return prefs
 
 class ActorCritic:
-    def __init__(self, state_dim, action_dim, gamma=0.99, alpha=0.001):
-
-        nets = self.create_net(state_dim, action_dim)
+    def __init__(self, state_dim, action_dim, gamma=0.99, alpha=0.001, beta=0.01):
         self.alpha = alpha
-        self.policy_net, self.value_net = nets[0].to(DEVICE), nets[1].to(DEVICE)
-        self.policy_optimizer = torch.optim.Adam(self.policy_net.parameters(), lr=alpha)
-        self.value_optimizer = torch.optim.Adam(self.value_net.parameters(), lr=alpha)
+        self.beta = beta
+        self.ac_net = nets.DualACNET(state_dim, action_dim).to(DEVICE)
+        self.optimizer = torch.optim.Adam(self.ac_net.parameters(), lr=self.alpha)
         self.action_size = action_dim
         self.gamma = gamma
-        self.loss = nn.MSELoss()
+        self.mse_loss = nn.MSELoss()
 
-    def create_net(self, s_dim, a_dim):
-
-        pnet = PolicyNet(s_dim, a_dim)
-        vnet = Net(s_dim, action_dim=1)
+    @staticmethod
+    def create_net(s_dim, a_dim):
+        pnet = nets.PolicyNet(s_dim, a_dim)
+        vnet = nets.Net(s_dim, action_dim=1)
 
         return pnet, vnet
 
     def get_action(self, state):
         """Softmax Policy"""
-        with torch.no_grad():
-            preferences = self.policy_net(torch.Tensor(state).to(DEVICE))
-            action_dist = torch.distributions.Categorical(preferences)
-            action = action_dist.sample()
+        preferences = self.ac_net(numpy_to_cuda(state))[1]
+        action_dist = Categorical(preferences)
+        action = action_dist.sample()
         return action.item()
 
     def update(self, batch_sample):
-
         state, action, reward, next_state, done = batch_sample
-        states = torch.Tensor(state).to(DEVICE)
 
-        actions = torch.Tensor(action).unsqueeze(1).to(DEVICE)
+        states = numpy_to_cuda(state)
+        next_states = numpy_to_cuda(next_state)
+        actions = numpy_to_cuda(action)
+        rewards = numpy_to_cuda(reward)
 
-        state_vs = self.value_net(states)
+        state_vs = self.ac_net(states)[0]
+        next_state_values = self.ac_net(next_states)[0].detach()
 
-        non_final_states = torch.Tensor(next_state).to(DEVICE)
-        next_state_values = self.value_net(non_final_states).detach()
         next_state_values[done] = 0
-        next_state_values = next_state_values.to(DEVICE)
-        td_target = torch.Tensor(reward).to(DEVICE) + self.gamma * next_state_values.squeeze(1)
 
-        delta = (td_target - state_vs.squeeze(1)).detach()
+        td_target = rewards + self.gamma * next_state_values
+        advantage = td_target - state_vs
+        print(td_target.shape, td_target)
+        policy = self.ac_net(states)[1]
+        policy_dist = torch.distributions.Categorical(policy)
+        log_prob = policy_dist.log_prob(actions)
 
-        preferences = self.policy_net(states)
-        action_dist = torch.distributions.Categorical(preferences.T)
-        log_prob = action_dist.log_prob(actions)
+        policy_loss = self.policy_loss(advantage, log_prob, policy)
+        value_loss = self.mse_loss(state_vs, td_target)
+        loss = policy_loss + value_loss
 
-        # policy_loss = (-delta * log_prob.T).mean()
-        value_loss = self.loss(td_target, state_vs)
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        return loss
 
-        self.policy_optimizer.zero_grad()
-        # policy_loss.backward(retain_graph=True)
-        # self.policy_optimizer.step()
-        with torch.no_grad():
-            for i, p in enumerate(self.policy_net.parameters()):
-                new_val = p + self.alpha * delta * p.grad
-                p.copy_(new_val)
+    def online_update(self, time_step):
 
-        self.value_optimizer.zero_grad()
-        value_loss.backward()
-        self.value_optimizer.step()
+        state, action, reward, next_state, done = time_step
+
+        state_t = numpy_to_cuda(state)
+        next_state_t = numpy_to_cuda(next_state)
+
+        state_vs = self.ac_net(state_t)[0]
+        next_state_values = self.ac_net(next_state_t)[0].detach()
+
+        next_state_values[done] = 0
+
+        td_target = reward + self.gamma * next_state_values
+        advantage = td_target - state_vs
+
+        policy = self.ac_net(state_t)[1]
+        policy_dist = torch.distributions.Categorical(policy)
+        log_prob = policy_dist.log_prob(torch.tensor([action]).to(DEVICE))
+
+        policy_loss = self.policy_loss(advantage, log_prob, policy)
+        value_loss = self.mse_loss(state_vs, td_target)
+        loss = policy_loss + value_loss
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        return loss
+
+    def policy_loss(self, advantage, log_prob, policy):
+        return (-advantage.detach() * log_prob).mean() - self.beta * Categorical(policy).entropy().mean()
+
+
+class PPO(ActorCritic):
+    def __init__(self, state_dim, action_dim, alpha=0.001, gamma=0.99, epsilon=0.001):
+        super().__init__(state_dim, action_dim, gamma=0.99, alpha=0.001)
+
+        self.epsilon = epsilon
+
+    def policy_loss(self, advantage, log_prob, _):
+        loss = -torch.min((log_prob - log_prob.detach()).exp(), 1+torch.sign(advantage.detach())*self.epsilon) \
+               * advantage.detach()
+        return loss.mean()
+
+
+class TRPO(ActorCritic):
+    def __init__(self, state_dim, action_dim, alpha=0.001, gamma=0.99, beta=0.1):
+        super().__init__(state_dim, action_dim, gamma=0.99, alpha=0.001)
+
+        self.beta = beta
+
+    def policy_loss(self, advantage, log_prob, policy):
+        policy_dist = Categorical(policy)
+        loss = -(log_prob-log_prob.detach())*advantage.detach() - self.beta*(policy*(policy.log()-policy.detach().log()))
+        return loss.mean()
+
 
 
