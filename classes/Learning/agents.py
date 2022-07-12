@@ -60,7 +60,7 @@ class DuellingDQN:
 
         self.optimizer.zero_grad()
         loss.backward()
-        nn.utils.clip_grad_norm(self.policy_net.parameters(), max_norm=2)
+        nn.utils.clip_grad_norm(self.policy_net.parameters(), max_norm=1)
         self.optimizer.step()
 
         for target_param, param in zip(self.target_net.parameters(), self.policy_net.parameters()):
@@ -108,15 +108,15 @@ class ActorCritic:
 
         next_state_values[done] = 0
 
-        td_target = rewards + self.gamma * next_state_values
-        advantage = td_target - state_vs
-        print(td_target.shape, td_target)
+        td_target = rewards + self.gamma * next_state_values.squeeze(1)
+        advantage = td_target - state_vs.squeeze(1)
+
         policy = self.ac_net(states)[1]
         policy_dist = torch.distributions.Categorical(policy)
         log_prob = policy_dist.log_prob(actions)
 
         policy_loss = self.policy_loss(advantage, log_prob, policy)
-        value_loss = self.mse_loss(state_vs, td_target)
+        value_loss = self.mse_loss(state_vs.squeeze(1), td_target)
         loss = policy_loss + value_loss
 
         self.optimizer.zero_grad()
