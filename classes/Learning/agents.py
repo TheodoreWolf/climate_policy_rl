@@ -1,11 +1,12 @@
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.distributions import Categorical
+
 try:
     from . import networks as nets
 except:
     import networks as nets
-from torch.distributions import Categorical
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 numpy_to_cuda = lambda numpy_array: torch.from_numpy(numpy_array).float().to(DEVICE)
@@ -60,7 +61,7 @@ class DuellingDQN:
 
         self.optimizer.zero_grad()
         loss.backward()
-        nn.utils.clip_grad_norm(self.policy_net.parameters(), max_norm=1)
+        nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1)
         self.optimizer.step()
 
         for target_param, param in zip(self.target_net.parameters(), self.policy_net.parameters()):
@@ -125,7 +126,6 @@ class ActorCritic:
         return loss
 
     def online_update(self, time_step):
-
         state, action, reward, next_state, done = time_step
 
         state_t = numpy_to_cuda(state)
@@ -163,20 +163,22 @@ class PPO(ActorCritic):
         self.epsilon = epsilon
 
     def policy_loss(self, advantage, log_prob, _):
-        loss = -torch.min((log_prob - log_prob.detach()).exp(), 1+torch.sign(advantage.detach())*self.epsilon) \
+        loss = -torch.min((log_prob - log_prob.detach()).exp(), 1 + torch.sign(advantage.detach()) * self.epsilon) \
                * advantage.detach()
         return loss.mean()
 
 
 class TRPO(ActorCritic):
+    """TRPO implementation: unfinished"""
     def __init__(self, state_dim, action_dim, alpha=0.001, gamma=0.99, beta=0.1):
         super().__init__(state_dim, action_dim, gamma=0.99, alpha=0.001)
-
+        print("IMPLEMENTATION IS WRONG")
         self.beta = beta
 
     def policy_loss(self, advantage, log_prob, policy):
         policy_dist = Categorical(policy)
-        loss = -(log_prob-log_prob.detach())*advantage.detach() - self.beta*(policy*(policy.log()-policy.detach().log()))
+        loss = -(log_prob - log_prob.detach()) * advantage.detach() - self.beta * (
+                policy * (policy.log() - policy.detach().log()))
         return loss.mean()
 
 

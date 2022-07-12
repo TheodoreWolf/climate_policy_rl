@@ -12,7 +12,7 @@ import numpy as np
 from scipy.integrate import odeint
 from  . import ays_model as ays
 from . import ays_general
-from . import Basins
+from .Basins import Basins
 from gym import Env
 
 import mpl_toolkits.mplot3d as plt3d
@@ -78,6 +78,7 @@ class AYS_Environment(Env):
     """
     dimensions=np.array( ['A','Y','S'] )
     management_options=['default', 'LG' , 'ET','LG+ET'  ]
+    management_cost = 0.1
     action_space=[(False, False), (True, False), (False, True), (True, True)]
     action_space_number=np.arange(len(action_space))
     # AYS example from Kittel et al. 2017:
@@ -96,7 +97,7 @@ class AYS_Environment(Env):
     #sigma_ET = 2.83e12
 
     phi = 4.7e10
-    
+
     AYS0 = [240, 7e13, 5e11]
     
     possible_test_cases=[[0.4949063922255394, 0.4859623171738628, 0.5] , [0.42610779 ,0.52056811, 0.5]]
@@ -163,7 +164,7 @@ class AYS_Environment(Env):
         if not self._inside_planetary_boundaries():
             self.final_state = True
             #print("Left planetary boundaries!" + str(self.state))
-            reward=0
+            #reward=0
         return self.state, reward, self.final_state
     
     def _perform_step(self, action, next_t):
@@ -245,30 +246,39 @@ class AYS_Environment(Env):
                 reward=1.
                 if self.management_options[action] != 'default':
                     reward -=cost_managment
+
             else:
                 reward=-0.0000000000000001
-            
-            #print(action, reward)
-            
+
             return reward
-            
-        def reward_distance_PB(action=0):
-            a,y,s=  self.state
-#             dist=[]
-#             for idx, boundary in enumerate(self.PB):
-#                 dist_this_variable=np.linalg.norm(self.state[idx] - boundary)
-#                 dist.append(dist_this_variable)
-#             reward=1
-#             for distance in dist:
-#                 reward *=distance
-            norm=np.linalg.norm(self.state-self.PB)
-            #norm = (self.state[0] - self.A_PB)**2 
+
+        def policy_cost(action=0):
+            """@Theo Wolf, we add a cost to using management options but guide the agent with PBs"""
             if self._inside_planetary_boundaries():
-                reward=1.
+                reward = np.linalg.norm(self.state-self.PB)
+            else:
+                reward = 0
+            if self.management_options[action] != 'default':
+                reward -= self.management_cost  # cost of using management
+                if self.management_options[action] == 'LG+ET':
+                    reward -= self.management_cost  # we add more cost for using both actions
+            return reward
+
+        def time_is_money(action=0):
+            """@Theo Wolf, we want the agent to go as fast as possible"""
+            if self._inside_planetary_boundaries():
+                reward = 0
+            else:
+                reward = -10
+            if self._good_final_state():
+                reward = 10
+            return reward
+
+        def reward_distance_PB(action=0):
+            if self._inside_planetary_boundaries():
+                reward=np.linalg.norm(self.state-self.PB)
             else:
                 reward=0.
-            reward*=(norm)
-            #print(norm, reward)
             return reward
         
         if choice_of_reward=='final_state':
@@ -283,6 +293,10 @@ class AYS_Environment(Env):
             return reward_survive
         elif choice_of_reward=='survive_cost':
             return reward_survive_cost
+        elif choice_of_reward=="policy_cost":
+            return policy_cost
+        elif choice_of_reward=="time":
+            return time_is_money
         elif choice_of_reward==None:
             print("ERROR! You have to choose a reward function!\n",
                    "Available Reward functions for this environment are: PB, rel_share, survive, desirable_region!")

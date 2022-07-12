@@ -79,7 +79,8 @@ def create_figure(Azimut=170, Elevation=36, label=None, colors=None, ax=None, ti
 
     if ax is None:
         fig3d = plt.figure(figsize=(16,9))
-        ax3d = plt3d.Axes3D(fig3d)
+        #ax3d = plt3d.Axes3D(fig3d)
+        ax3d = fig3d.add_subplot(111, projection="3d")
     else:
         ax3d=ax
         fig3d=None
@@ -178,7 +179,8 @@ def create_extract_figure(Azimut= AZIMUTH_FLOW, plot_boundary=False, label=None,
     
     if ax is None:
         fig3d = plt.figure(figsize=(12,9))
-        ax3d = plt3d.Axes3D(fig3d)
+        #ax3d = plt3d.Axes3D(fig3d)
+        ax3d = fig3d.add_subplot(111, projection="3d")
     else:
         ax3d=ax
         fig3d=None

@@ -31,5 +31,9 @@ class DQNLightning(pl.LightningModule):
     def forward(self, state) -> Tensor:
         return self.network(state)
 
+    def training_step(self, *args, **kwargs) -> float:
+        pass
+
+
 
 
