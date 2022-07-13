@@ -7,9 +7,9 @@ import matplotlib.pyplot as plt
 import wandb
 import torch
 
-import Envs.AYS.AYS_Environment as ays
-import Learning.agents as ag
-import Learning.utils as utils
+from .Envs.AYS import AYS_Environment as ays
+from .Learning import agents as ag
+from .Learning import utils
 
 
 def learning_loop(AGENT="PPO",
