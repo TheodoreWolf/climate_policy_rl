@@ -469,7 +469,7 @@ class AYS_Environment(Env):
 
         final_state = self._which_final_state().name
 
-        plt.show(block=False)
+        plt.show()
 
         return final_state
 

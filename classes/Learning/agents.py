@@ -13,18 +13,20 @@ numpy_to_cuda = lambda numpy_array: torch.from_numpy(numpy_array).float().to(DEV
 
 
 class DuellingDQN:
-    def __init__(self, state_dim, action_dim, gamma=0.96, alpha=0.0025, tau=0.001):
+    def __init__(self, state_dim, action_dim, gamma=0.96, lr=0.0025, tau=0.001, rho=0.5, epsilon=0.1):
 
         self.target_net = self.create_net(state_dim, action_dim).to(DEVICE)
         self.policy_net = self.create_net(state_dim, action_dim).to(DEVICE)
 
-        self.optimizer = torch.optim.Adam(self.policy_net.parameters(), lr=alpha)
+        self.optimizer = torch.optim.Adam(self.policy_net.parameters(), lr=lr)
         self.action_size = action_dim
         self.gamma = gamma
         self.loss = nn.SmoothL1Loss()
         self.t = 1
         self.tau = tau
+        self.rho = rho
         self.epsilon = lambda t: 0.001 + (10 - 0.01) * np.exp(-0.001 * t)
+        self.epsilon_ = lambda t: epsilon * 1/(t**self.rho)
 
     @staticmethod
     def create_net(s_dim, a_dim, duelling=True):
@@ -43,7 +45,7 @@ class DuellingDQN:
         else:
             return torch.tensor(np.random.choice(self.action_size)).numpy()
 
-    def update(self, batch_sample):
+    def update(self, batch_sample, weights=None):
 
         state, action, reward, next_state, done = batch_sample
 
@@ -56,28 +58,31 @@ class DuellingDQN:
         next_state_values[done] = 0
 
         expected_qs = next_state_values * self.gamma + torch.Tensor(reward).to(DEVICE)
-
-        loss = self.loss(state_qs, expected_qs.unsqueeze(1))
+        if weights:
+            weights = numpy_to_cuda(weights)
+            loss = ((expected_qs.unsqueeze(1)-state_qs)**2 * weights).mean()
+        else:
+            loss = self.loss(state_qs, expected_qs.unsqueeze(1))
 
         self.optimizer.zero_grad()
         loss.backward()
-        nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1)
+        #nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1)
         self.optimizer.step()
 
         for target_param, param in zip(self.target_net.parameters(), self.policy_net.parameters()):
             target_param.data.copy_(self.tau * param + (1 - self.tau) * target_param)
-        return loss
+        return loss, (state_qs-expected_qs.unsqueeze(1)).detach()
 
     def online_update(self, time_step):
         raise NotImplementedError
 
 
-class ActorCritic:
-    def __init__(self, state_dim, action_dim, gamma=0.99, alpha=0.001, beta=0.01):
-        self.alpha = alpha
+class A2C:
+    def __init__(self, state_dim, action_dim, gamma=0.99, lr=0.001, beta=0.01):
+        self.lr = lr
         self.beta = beta
         self.ac_net = nets.DualACNET(state_dim, action_dim).to(DEVICE)
-        self.optimizer = torch.optim.Adam(self.ac_net.parameters(), lr=self.alpha)
+        self.optimizer = torch.optim.Adam(self.ac_net.parameters(), lr=self.lr)
         self.action_size = action_dim
         self.gamma = gamma
         self.mse_loss = nn.MSELoss()
@@ -96,7 +101,7 @@ class ActorCritic:
         action = action_dist.sample()
         return action.item()
 
-    def update(self, batch_sample):
+    def update(self, batch_sample, weights=None):
         state, action, reward, next_state, done = batch_sample
 
         states = numpy_to_cuda(state)
@@ -116,14 +121,21 @@ class ActorCritic:
         policy_dist = torch.distributions.Categorical(policy)
         log_prob = policy_dist.log_prob(actions)
 
-        policy_loss = self.policy_loss(advantage, log_prob, policy)
-        value_loss = self.mse_loss(state_vs.squeeze(1), td_target)
+        # Importance sampling weights
+        if weights:
+            weights = numpy_to_cuda(weights)
+            policy_loss = self.policy_loss(advantage, log_prob, policy, weights=weights)
+            value_loss = ((state_vs.squeeze(1) - td_target)**2 * weights).mean()
+        else:
+            policy_loss = self.policy_loss(advantage, log_prob, policy)
+            value_loss = self.mse_loss(state_vs.squeeze(1), td_target)
         loss = policy_loss + value_loss
 
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        return loss
+        # we return both loss and advantage for logging and PER replay buffer respectively
+        return loss, advantage.detach()
 
     def online_update(self, time_step):
         state, action, reward, next_state, done = time_step
@@ -152,26 +164,32 @@ class ActorCritic:
         self.optimizer.step()
         return loss
 
-    def policy_loss(self, advantage, log_prob, policy):
-        return (-advantage.detach() * log_prob).mean() - self.beta * Categorical(policy).entropy().mean()
+    def policy_loss(self, advantage, log_prob, policy, weights=None):
+        if weights:
+            return (-advantage.detach() * log_prob * weights).mean() - self.beta * Categorical(policy).entropy().mean()
+        else:
+            return (-advantage.detach() * log_prob).mean() - self.beta * Categorical(policy).entropy().mean()
 
 
-class PPO(ActorCritic):
-    def __init__(self, state_dim, action_dim, alpha=0.001, gamma=0.99, epsilon=0.001):
-        super().__init__(state_dim, action_dim, gamma=0.99, alpha=0.001)
+class PPO(A2C):
+    def __init__(self, state_dim, action_dim, alpha=0.001, gamma=0.99, beta=0.01):
+        super().__init__(state_dim, action_dim, gamma=0.99, lr=0.001, beta=0.001)
 
-        self.epsilon = epsilon
+        self.epsilon = beta
 
-    def policy_loss(self, advantage, log_prob, _):
+    def policy_loss(self, advantage, log_prob, _, weights=None):
         loss = -torch.min((log_prob - log_prob.detach()).exp(), 1 + torch.sign(advantage.detach()) * self.epsilon) \
                * advantage.detach()
-        return loss.mean()
+        if weights:
+            return (loss*weights).mean()
+        else:
+            return loss.mean()
 
 
-class TRPO(ActorCritic):
+class TRPO(A2C):
     """TRPO implementation: unfinished"""
     def __init__(self, state_dim, action_dim, alpha=0.001, gamma=0.99, beta=0.1):
-        super().__init__(state_dim, action_dim, gamma=0.99, alpha=0.001)
+        super().__init__(state_dim, action_dim, gamma=0.99, lr=0.001)
         print("IMPLEMENTATION IS WRONG")
         self.beta = beta
 
