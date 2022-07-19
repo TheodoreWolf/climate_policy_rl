@@ -178,8 +178,9 @@ class PPO(A2C):
         self.epsilon = beta
 
     def policy_loss(self, advantage, log_prob, _, weights=None):
-        loss = -torch.min((log_prob - log_prob.detach()).exp(), 1 + torch.sign(advantage.detach()) * self.epsilon) \
-               * advantage.detach()
+        ratio = (log_prob - log_prob.detach()).exp()
+        clipped_ratio = ratio.clamp(min=1.-self.epsilon, max=1.-self.epsilon)
+        loss = -torch.min(ratio*advantage, clipped_ratio*advantage)
         if weights:
             return (loss*weights).mean()
         else:
