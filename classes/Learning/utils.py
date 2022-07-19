@@ -132,7 +132,7 @@ class PER_IS_ReplayBuffer:
     def sample(self, batch_size, beta):
 
         samples = {
-            'weights': np.zeros(shape=batch_size, ),
+            'weights': np.zeros(shape=batch_size, dtype=np.float32),
             'indexes': np.zeros(shape=batch_size, dtype=np.int32),
         }
 
@@ -148,7 +148,7 @@ class PER_IS_ReplayBuffer:
             idx = samples['indexes'][i]
             prob = self.priority_sum[idx+self.capacity]/self._sum()
             weight = (prob*self.size)**(-beta)
-            samples['weights'] = np.array([weight/max_weight])
+            samples['weights'][i] = weight/max_weight
 
         for k, v in self.data.items():
             samples[k] = v[samples['indexes']]

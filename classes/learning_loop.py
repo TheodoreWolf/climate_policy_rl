@@ -100,7 +100,7 @@ def learning_loop(AGENT="A2C",
 
         for i in range(MAX_STEPS):
             # random experience can help with learning
-            if episodes > RANDOM_EXPERIENCE:
+            if episodes >= RANDOM_EXPERIENCE:
                 action = agent.get_action(state)
             else:
                 action = np.random.choice(action_dim)
@@ -142,11 +142,11 @@ def learning_loop(AGENT="A2C",
         mean = np.mean(rewards[-50:])
         mean_rewards.append(mean)
         wandb.log({'episode_reward': episode_reward, "moving_average": mean})
-        print("Episode:", episodes, "|| Reward:", round(episode_reward),"|| Final State ",  env._which_final_state().name)
+        print("Episode:", episodes, "|| Reward:", round(episode_reward),"|| Final State ", env._which_final_state().name)
 
         # for notebook
-        if PLOT and episodes % 50 == 0:
-            utils.plot_test_trajectory(env, agent)
+        # if PLOT and episodes % 50 == 0:
+        #     utils.plot_test_trajectory(env, agent)
 
         # if loss is very noisy
         if not UPDATE_ONLINE and SCHEDULER[0]:
@@ -162,7 +162,7 @@ def learning_loop(AGENT="A2C",
     wandb.finish()
     #utils.plot_test_trajectory(env, agent)
     if PLOT:
-        plt.show()
+        plt.plot(mean_rewards)
     else:
         return np.mean(rewards)
 
@@ -266,10 +266,13 @@ def learning_loop_wandb_hparam(config=None, MAX_FRAMES = 1e5, MAX_EPISODES = 200
 
 
 if __name__ == "__main__":
-    learning_loop(AGENT="DuellingDQN",
+    learning_loop(AGENT="A2C",
                   SEED=0,
-                  NAME="per_is_trial, a=0.6",
+                  NAME=None,
                   PER_IS=True,
-                  BUFFER_SIZE=2**13,
+                  BUFFER_SIZE=2 ** 14,
+                  BATCH_SIZE=64,
+                  BETA=0.27579,
+                  LEARNING_RATE=0.01
                   )
     #wandb.agent(entity="1f1ehogx", function=learning_loop_wandb_hparam)
