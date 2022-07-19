@@ -257,7 +257,7 @@ def learning_loop_wandb_hparam(config=None, MAX_FRAMES = 1e5, MAX_EPISODES = 200
             # bookkeeping
             rewards.append(episode_reward)
             wandb.log({"reward": episode_reward})
-            wandb.log({"moving_average_reward": np.mean(rewards[-50])})
+            wandb.log({"moving_average_reward": np.mean(rewards[-50:])})
             # if we spend a long time in the simulation
             if frame_idx > MAX_FRAMES:
                 break
@@ -266,10 +266,10 @@ def learning_loop_wandb_hparam(config=None, MAX_FRAMES = 1e5, MAX_EPISODES = 200
 
 
 if __name__ == "__main__":
-    # learning_loop(AGENT="DuellingDQN",
-    #               SEED=1,
-    #               NAME="per_is_trial, a=0.6",
-    #               PER_IS=True,
-    #               BUFFER_SIZE=2**13,
-    #               )
-    wandb.agent(entity="1f1ehogx", function=learning_loop_wandb_hparam)
+    learning_loop(AGENT="DuellingDQN",
+                  SEED=0,
+                  NAME="per_is_trial, a=0.6",
+                  PER_IS=True,
+                  BUFFER_SIZE=2**13,
+                  )
+    #wandb.agent(entity="1f1ehogx", function=learning_loop_wandb_hparam)
