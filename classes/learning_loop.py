@@ -17,19 +17,19 @@ def learning_loop(AGENT="A2C",
                   MAX_EPISODES=2000,
                   RANDOM_EXPERIENCE=0,
                   LEARNING_RATE=3e-4,
-                  BUFFER_SIZE=2**12,
+                  BUFFER_SIZE=2**14,
                   REWARD_TYPE='PB',
                   DT=1,
-                  SCHEDULER=(False, 1000, 0.5),
                   SEED=0,
                   MAX_STEPS=600,
-                  DISCOUNT=0.99,
+                  DISCOUNT=0.999,
                   MAX_FRAMES=1e5,
                   NAME=None,
                   PER_IS=False,
                   PLOT=True,
                   JOB_TYPE=None,
-                  BETA=0.01):
+                  EPSILON=0.01,
+                  wandbsave=False):
 
     config = {
         "learning_rate": LEARNING_RATE,
@@ -40,11 +40,10 @@ def learning_loop(AGENT="A2C",
         "buffer_size": BUFFER_SIZE,
         "reward_type": REWARD_TYPE,
         "dt": DT,
-        "scheduler": SCHEDULER,
         "seed": SEED,
         "discount": DISCOUNT,
         "PER_IS": PER_IS,
-        "beta": BETA
+        "epsilon": EPSILON
     }
 
     # seeds
@@ -61,12 +60,9 @@ def learning_loop(AGENT="A2C",
     # Agent
     reload(ag)
     if AGENT=="A2C" or AGENT=="PPO": # Actor critic agents
-        agent = eval("ag." + AGENT)(state_dim, action_dim, gamma=DISCOUNT, lr=LEARNING_RATE, beta=BETA)
+        agent = eval("ag." + AGENT)(state_dim, action_dim, gamma=DISCOUNT, lr=LEARNING_RATE, epsilon=EPSILON)
     else: # DQN agent
-        agent = eval("ag." + AGENT)(state_dim, action_dim, gamma=DISCOUNT, lr=LEARNING_RATE)
-
-    # Scheduler
-    scheduler = torch.optim.lr_scheduler.StepLR(agent.optimizer, step_size=SCHEDULER[1], gamma=SCHEDULER[2])
+        agent = eval("ag." + AGENT)(state_dim, action_dim, gamma=DISCOUNT, lr=LEARNING_RATE, epsilon=EPSILON)
 
     # Memory
     if PER_IS:
@@ -80,12 +76,13 @@ def learning_loop(AGENT="A2C",
     if PER_IS:
         job_type += "_PER_IS"
     name = "batch" + str(BATCH_SIZE) + "_buffer" + str(BUFFER_SIZE) + "_seed" + str(SEED) if NAME is None else NAME
-    wandb.init(group=group,
-               job_type=job_type,
-               config=config,
-               name=name,
-               entity="climate_policy_optim",
-               project="AYS_learning")
+    if wandbsave:
+        wandb.init(group=group,
+                   job_type=job_type,
+                   config=config,
+                   name=name,
+                   entity="climate_policy_optim",
+                   project="AYS_learning")
 
     # initialise variables and lists
     rewards = []
@@ -97,6 +94,7 @@ def learning_loop(AGENT="A2C",
         # reset environment to a random state (0.5, 0.5, 0.5) * gaussian noise
         state = env.reset()
         episode_reward = 0
+        I = 1
 
         for i in range(MAX_STEPS):
             # random experience can help with learning
@@ -113,8 +111,10 @@ def learning_loop(AGENT="A2C",
 
             # we can update online or offline
             if UPDATE_ONLINE:
-                loss = agent.online_update((state, action, reward, next_state, done))
-                wandb.log({'loss': loss})
+                loss = agent.online_update((state, action, reward, next_state, done), I)
+                I *= agent.gamma
+                if wandbsave:
+                    wandb.log({'loss': loss})
             else:
                 memory.push(state, action, reward, next_state, done)
                 if memory.__len__() > BATCH_SIZE:
@@ -127,7 +127,8 @@ def learning_loop(AGENT="A2C",
                     else:
                         sample = memory.sample(BATCH_SIZE)
                         loss, _ = agent.update(sample)
-                    wandb.log({'loss': loss})
+                    if wandbsave:
+                        wandb.log({'loss': loss})
 
             # prepare for next iteration
             state = next_state
@@ -141,33 +142,34 @@ def learning_loop(AGENT="A2C",
         rewards.append(episode_reward)
         mean = np.mean(rewards[-50:])
         mean_rewards.append(mean)
-        wandb.log({'episode_reward': episode_reward, "moving_average": mean})
-        print("Episode:", episodes, "|| Reward:", round(episode_reward),"|| Final State ", env._which_final_state().name)
+        if wandbsave:
+            wandb.log({'episode_reward': episode_reward, "moving_average": mean})
+        #print("Episode:", episodes, "|| Reward:", round(episode_reward),"|| Final State ", env._which_final_state().name)
 
         # for notebook
-        # if PLOT and episodes % 50 == 0:
-        #     utils.plot_test_trajectory(env, agent)
-
-        # if loss is very noisy
-        if not UPDATE_ONLINE and SCHEDULER[0]:
-            scheduler.step()
+        if PLOT and episodes % 10==0:
+            utils.plot(frame_idx, mean_rewards)
+            if episodes % 500 == 0:
+                utils.plot_test_trajectory(env, agent)
 
         # if we spend a long time in the simulation
         if frame_idx > MAX_FRAMES:
             break
 
     # log and show final trajectory
-    wandb.run.summary["mean_reward"] = np.mean(rewards)
-    wandb.run.summary["top_reward"] = max(rewards)
-    wandb.finish()
-    #utils.plot_test_trajectory(env, agent)
+    if wandbsave:
+        wandb.run.summary["mean_reward"] = np.mean(rewards)
+        wandb.run.summary["top_reward"] = max(rewards)
+        wandb.finish()
+
     if PLOT:
-        plt.plot(mean_rewards)
-    else:
-        return np.mean(rewards)
+        utils.plot_test_trajectory(env, agent)
+    # else:
+    #     return np.mean(rewards)
+    return agent
 
 
-def learning_loop_wandb_hparam(config=None, MAX_FRAMES = 1e5, MAX_EPISODES = 2000, MAX_STEPS = 600, agent_str="A2C", per_is=True, seed=0):
+def learning_loop_wandb_hparam(config=None, MAX_FRAMES = 1e5, MAX_EPISODES = 2000, MAX_STEPS = 600, agent_str="A2C", per_is=False, seed=0):
 
     with wandb.init(config=config):
 
@@ -176,14 +178,22 @@ def learning_loop_wandb_hparam(config=None, MAX_FRAMES = 1e5, MAX_EPISODES = 200
 
         discount = config.discount
         lr = config.lr
-        beta = config.beta
-        buffer_size = config.buffer_size
-        random_exp = config.random_exp
-        batch_size = config.batch_size
+        epsilon = config.epsilon
 
-        if per_is:
-            alpha_buffer = config.alpha_buffer
-            beta_buffer = config.beta_buffer
+
+        if agent_str == "DuellingDQN":
+            buffer_size = config.buffer_size
+            random_exp = config.random_exp
+            batch_size = config.batch_size
+
+            if per_is:
+                alpha_buffer = config.alpha_buffer
+                beta_buffer = config.beta_buffer
+
+                # Memory
+                memory = utils.PER_IS_ReplayBuffer(capacity=buffer_size, alpha=alpha_buffer)
+            else:
+                memory = utils.ReplayBuffer(buffer_size)
 
         # seeds
         random.seed(seed)
@@ -199,15 +209,9 @@ def learning_loop_wandb_hparam(config=None, MAX_FRAMES = 1e5, MAX_EPISODES = 200
         # Agent
         reload(ag)
         if agent_str=="A2C" or agent_str=="PPO": # Actor critic agents
-            agent = eval("ag." + agent_str)(state_dim, action_dim, gamma=discount, lr=lr, beta=beta)
+            agent = eval("ag." + agent_str)(state_dim, action_dim, gamma=discount, lr=lr, epsilon=epsilon)
         else: # DQN agent
             agent = eval("ag." + agent_str)(state_dim, action_dim, gamma=discount, lr=lr)
-
-        # Memory
-        if per_is:
-            memory = utils.PER_IS_ReplayBuffer(capacity=buffer_size, alpha=alpha_buffer)
-        else:
-            memory = utils.ReplayBuffer(buffer_size)
 
         # initialise variables and lists
         rewards = []
@@ -218,13 +222,16 @@ def learning_loop_wandb_hparam(config=None, MAX_FRAMES = 1e5, MAX_EPISODES = 200
             # reset environment to a random state (0.5, 0.5, 0.5) * gaussian noise
             state = env.reset()
             episode_reward = 0
+            I = 1
 
             for i in range(MAX_STEPS):
                 # random experience can help with learning
-                if episodes > random_exp:
+                if agent_str == "DuellingDQN" and episodes > random_exp:
                     action = agent.get_action(state)
-                else:
+                elif agent_str == "DuellingDQN":
                     action = np.random.choice(action_dim)
+                else:
+                    action = agent.get_action(state)
 
                 # step through environment
                 next_state, reward, done, = env.step(action)
@@ -232,19 +239,23 @@ def learning_loop_wandb_hparam(config=None, MAX_FRAMES = 1e5, MAX_EPISODES = 200
                 # add reward
                 episode_reward += reward
 
-                memory.push(state, action, reward, next_state, done)
-
-                if memory.__len__() > batch_size:
-                    if per_is:
-                        beta_buffer_t = 1 - beta_buffer * np.exp(-0.005 * episodes)  # we converge beta to 1
-                        sample = memory.sample(batch_size, beta_buffer_t)
-                        loss, tds = agent.update((sample['obs'], sample['action'], sample['reward'], sample['next_obs'], sample['done']), weights=sample['weights'])
-                        new_tds = np.abs(tds.cpu().numpy()) + 1e-6  # compatibility
-                        memory.update_priorities(sample['indexes'], new_tds)
-                    else:
-                        sample = memory.sample(batch_size)
-                        loss, _ = agent.update(sample)
+                if agent_str == "A2C":
+                    loss = agent.online_update((state, action, reward, next_state, done), I)
+                    I *= discount
                     wandb.log({'loss': loss})
+                else:
+                    memory.push(state, action, reward, next_state, done)
+                    if memory.__len__() > batch_size:
+                        if per_is:
+                            beta_buffer_t = 1 - beta_buffer * np.exp(-0.005 * episodes)  # we converge beta to 1
+                            sample = memory.sample(batch_size, beta_buffer_t)
+                            loss, tds = agent.update((sample['obs'], sample['action'], sample['reward'], sample['next_obs'], sample['done']), weights=sample['weights'])
+                            new_tds = np.abs(tds.cpu().numpy()) + 1e-6  # compatibility
+                            memory.update_priorities(sample['indexes'], new_tds)
+                        else:
+                            sample = memory.sample(batch_size)
+                            loss, _ = agent.update(sample)
+                        wandb.log({'loss': loss})
 
                 # prepare for next iteration
                 state = next_state
@@ -268,11 +279,15 @@ def learning_loop_wandb_hparam(config=None, MAX_FRAMES = 1e5, MAX_EPISODES = 200
 if __name__ == "__main__":
     learning_loop(AGENT="A2C",
                   SEED=0,
+                  UPDATE_ONLINE=True,
                   NAME=None,
+                  JOB_TYPE="random",
                   PER_IS=True,
                   BUFFER_SIZE=2 ** 14,
                   BATCH_SIZE=64,
-                  BETA=0.27579,
-                  LEARNING_RATE=0.01
+                  BETA=0.01,
+                  LEARNING_RATE=1e-4,
+                  MAX_EPISODES=2000,
+                  MAX_FRAMES=1e5
                   )
     #wandb.agent(entity="1f1ehogx", function=learning_loop_wandb_hparam)

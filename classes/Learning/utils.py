@@ -67,17 +67,17 @@ class PER_IS_ReplayBuffer:
     """
     Adapted from https://github.com/labmlai/annotated_deep_learning_paper_implementations
     """
-    def __init__(self, capacity, alpha):
+    def __init__(self, capacity, alpha, state_dim=3):
         self.capacity = capacity
         self.alpha = alpha
         self.priority_sum = [0 for _ in range(2 * self.capacity)]
         self.priority_min = [float('inf') for _ in range(2 * self.capacity)]
         self.max_priority = 1.
         self.data = {
-            'obs': np.zeros(shape=(capacity, 3), dtype=np.float64),
+            'obs': np.zeros(shape=(capacity, state_dim), dtype=np.float64),
             'action': np.zeros(shape=capacity, dtype=np.int32),
             'reward': np.zeros(shape=capacity, dtype=np.float32),
-            'next_obs': np.zeros(shape=(capacity, 3), dtype=np.float64),
+            'next_obs': np.zeros(shape=(capacity, state_dim), dtype=np.float64),
             'done': np.zeros(shape=capacity, dtype=np.bool)
         }
         self.next_idx = 0

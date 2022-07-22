@@ -102,7 +102,7 @@ class AYS_Environment(Env):
 
     possible_test_cases = [[0.4949063922255394, 0.4859623171738628, 0.5], [0.42610779, 0.52056811, 0.5]]
 
-    def __init__(self, discount, t0=0, dt=1, reward_type='PB', max_steps=600, image_dir='./images/', run_number=0,
+    def __init__(self, discount=0.99, t0=0, dt=1, reward_type='PB', max_steps=600, image_dir='./images/', run_number=0,
                  plot_progress=False):
 
         self.image_dir = image_dir
@@ -404,7 +404,7 @@ class AYS_Environment(Env):
             # self.state=self.current_state + np.random.uniform(low=-limit_start, high=limit_start, size=3)
             self.state[0] = self.current_state[0] + np.random.uniform(low=-limit_start, high=limit_start)
             self.state[1] = self.current_state[1] + np.random.uniform(low=-limit_start, high=limit_start)
-            self.state[2] = 0.5
+            self.state[2] = self.current_state[2] #+ np.random.uniform(low=-limit_start, high=limit_start)
 
         # print(self.state)
         return self.state
