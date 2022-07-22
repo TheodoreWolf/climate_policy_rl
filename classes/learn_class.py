@@ -8,7 +8,7 @@ import wandb
 
 
 class learning:
-    def __init__(self, wandb_save=False, verbose=False, reward_type="PB", max_episodes=2000, max_steps=600, max_frames=1e5, max_epochs=200):
+    def __init__(self, wandb_save=False, verbose=False, reward_type="PB", max_episodes=2000, max_steps=600, max_frames=1e5, max_epochs=20):
 
         # environment
         self.env = AYS_Environment(reward_type=reward_type)
@@ -116,7 +116,7 @@ class learning:
         # initiate memory
         memory = utils.PER_IS_ReplayBuffer(buffer_size, alpha=alpha) if per_is else utils.ReplayBuffer(buffer_size)
 
-        if agent_str != "DuellingDQN" or agent_str != "DuellingDDQN":
+        if agent_str != "DuelDQN" and agent_str != "DuelDDQN":
             print("wrong agents, use DQN agents: DuelDQN or DuelDDQN")
             return
 
@@ -174,7 +174,6 @@ class learning:
                         loss, _ = agent.update(sample)
 
                     wandb.log({'loss': loss}) if self.wandb_save else None
-            print("hello")
             # we log or print depending on settings
             wandb.log({'episode_reward': episode_reward, "moving_average": mean}) if self.wandb_save else None
             print("Episode:", episodes, "|| Reward:", round(episode_reward),"|| Final State ", env._which_final_state().name) if self.verbose else None
