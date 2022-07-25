@@ -1,6 +1,11 @@
-from Envs.AYS.AYS_Environment import AYS_Environment
-import Learning.agents as ag
-import Learning.utils as utils
+try:
+    from Envs.AYS.AYS_Environment import AYS_Environment
+    import Learning.agents as ag
+    import Learning.utils as utils
+except:
+    from .Envs.AYS.AYS_Environment import AYS_Environment
+    from .Learning import agents as ag
+    from .Learning import utils as utils
 import random
 import numpy as np
 import torch
@@ -8,7 +13,7 @@ import wandb
 
 
 class learning:
-    def __init__(self, wandb_save=False, verbose=False, reward_type="PB", max_episodes=2000, max_steps=600, max_frames=1e5, max_epochs=20):
+    def __init__(self, wandb_save=False, verbose=False, reward_type="PB", max_episodes=2000, max_steps=600, max_frames=1e5, max_epochs=50):
 
         # environment
         self.env = AYS_Environment(reward_type=reward_type)
@@ -204,9 +209,8 @@ class learning:
         self.agent = eval("ag."+agent_str)(self.state_dim, self.action_dim, **kwargs)
 
 
-class observability(learning):
-    def __init__(self, wandb_save=False, verbose=False, reward_type="PB", max_episodes=2000, max_steps=600, max_frames=1e5, max_epochs=20):
-
+class MarkovState(learning):
+    def __init__(self, wandb_save=False, verbose=False, reward_type="PB", max_episodes=2000, max_steps=600, max_frames=1e5, max_epochs=50):
         super().__init__(wandb_save=wandb_save, verbose=verbose, reward_type=reward_type, max_episodes=max_episodes, max_steps=max_steps, max_frames=max_frames, max_epochs=max_epochs)
         self.state_dim = len(self.env.observation_space) * 2
 
@@ -247,7 +251,7 @@ class observability(learning):
                 episode_reward += reward
 
                 # update the agent with last experience
-                next_state_mkv = self.get_augmented_state(state, next_state)
+                next_state_mkv = self.get_velocity(next_state, action)
                 loss = agent.online_update((state_mkv, action, reward, next_state_mkv, done), I)
                 I *= agent.gamma
 
@@ -367,7 +371,6 @@ class observability(learning):
             # we log or print depending on settings
             wandb.log({'episode_reward': episode_reward, "moving_average": mean}) if self.wandb_save else None
             print("Episode:", episodes, "|| Reward:", round(episode_reward),"|| Final State ", env._which_final_state().name) if self.verbose else None
-
             # for notebook
             if notebook and episodes % 10 == 0:
                 utils.plot(frame_idx, mean_rewards)
@@ -393,12 +396,30 @@ class observability(learning):
         """Returns the velocity of the next state"""
         return np.hstack((next_state, next_state-state))
 
+    def get_velocity(self, next_state, action):
+        A, Y, S = next_state
+
+        sigma = [4e12, 4e12, 2.83e12, 2.83e12]
+        beta = [0.03, 0.015, 0.03, 0.015]
+        gamma = 1/(1+(S/sigma[action])**2)
+        phi = 4.7e10
+        U = Y/147
+        R = (1-gamma)*U
+        E = (U-R)/phi
+
+        dA = E - A/50
+        dY = beta[action]*Y - 8.57e-5*A
+        dS = R - S/50
+
+        v = np.array([dA, dY, dS])
+        return np.hstack((next_state, v))
+
 if __name__=="__main__":
     # experiment = observability(verbose=True, max_episodes=3000)
     # experiment.set_agent("A2C", epsilon=0.01, lr=3e-4)
     # experiment.learning_loop_online("A2C", notebook=False, plotting=False)
-    experiment = observability(max_frames=1e6, max_episodes=3000, verbose=True)
-    experiment.set_agent("DuelDDQN", epsilon=0.0, lr=3e-4)
+    experiment = observability(max_frames=1e6, max_episodes=2000, verbose=True)
+    experiment.set_agent("DuelDDQN", epsilon=0.1, lr=3e-4)
     experiment.learning_loop_offline("DuelDDQN", buffer_size=2 ** 14, batch_size=128, per_is=True, notebook=False,
                                      plotting=False)
 

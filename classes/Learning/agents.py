@@ -13,7 +13,7 @@ numpy_to_cuda = lambda numpy_array: torch.from_numpy(numpy_array).float().to(DEV
 
 
 class DuelDQN:
-    def __init__(self, state_dim, action_dim, gamma=0.96, lr=0.0025, tau=0.001, rho=0.5, epsilon=0.1, polyak=False):
+    def __init__(self, state_dim, action_dim, gamma=0.99, lr=0.0025, tau=0.001, rho=0.5, epsilon=0.1, polyak=False):
 
         self.target_net = self.create_net(state_dim, action_dim).to(DEVICE)
         self.policy_net = self.create_net(state_dim, action_dim).to(DEVICE)
