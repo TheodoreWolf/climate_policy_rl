@@ -17,9 +17,10 @@ class PolicyNet(nn.Module):
     def forward(self, obs):
         l = self.layer(obs)
         out = self.a(l)
-        prefs = F.softmax(out, dim=1)
+        #prefs = F.softmax(out, dim=-1)
 
-        return prefs
+        #return prefs
+        return out
 
 
 class Net(nn.Module):

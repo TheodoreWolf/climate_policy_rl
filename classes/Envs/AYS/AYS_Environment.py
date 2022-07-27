@@ -78,7 +78,6 @@ class AYS_Environment(Env):
     """
     dimensions = np.array(['A', 'Y', 'S'])
     management_options = ['default', 'LG', 'ET', 'LG+ET']
-    management_cost = 0.1
     action_space = [(False, False), (True, False), (False, True), (True, True)]
     action_space_number = np.arange(len(action_space))
     # AYS example from Kittel et al. 2017:
@@ -104,7 +103,7 @@ class AYS_Environment(Env):
 
     def __init__(self, discount=0.99, t0=0, dt=1, reward_type='PB', max_steps=600, image_dir='./images/', run_number=0,
                  plot_progress=False):
-
+        self.management_cost = 0.5
         self.image_dir = image_dir
         self.run_number = run_number
         self.plot_progress = plot_progress
@@ -377,7 +376,17 @@ class AYS_Environment(Env):
                 y - self.brown_fp[1]) < self.final_radius and np.abs(s - self.brown_fp[2]) < self.final_radius:
             return Basins.BROWN_FP
         else:
-            return Basins.OUT_PB
+            # return Basins.OUT_PB
+            return self._which_PB()
+
+    def _which_PB(self, ):
+        """ To check which PB has been violated"""
+        if self.state[0] >= self.A_PB:
+            return Basins.A_PB
+        elif self.state[1] <= self.Y_SF:
+            return Basins.Y_PB
+        elif self.state[2] <= 0:
+            return Basins.S_PB
 
     def get_plot_state_list(self):
         return self.state.tolist()

@@ -141,8 +141,8 @@ class A2C:
 
     @staticmethod
     def create_net(s_dim, a_dim):
-        pnet = nets.PolicyNet(s_dim, a_dim)
-        vnet = nets.Net(s_dim, action_dim=1)
+        pnet = nets.PolicyNet(s_dim, a_dim).to(DEVICE)
+        vnet = nets.Net(s_dim, action_dim=1).to(DEVICE)
 
         return pnet, vnet
 
@@ -195,7 +195,6 @@ class A2C:
 
         state_t = numpy_to_cuda(state)
         next_state_t = numpy_to_cuda(next_state)
-        #rewards = numpy_to_cuda(reward)
 
         state_vs = self.ac_net(state_t)[0]
         next_state_values = self.ac_net(next_state_t)[0].detach()
@@ -238,19 +237,149 @@ class PPO(A2C):
         else:
             return loss.mean()
 
+class A2Csplit(A2C):
+    def __init__(self, state_dim, action_dim, critic_gamma=0.9, actor_gamma=0.9, tau=1000, lr_critic=3e-4, **kwargs):
+        super().__init__(state_dim, action_dim, **kwargs)
+        self.t = 0
+        self.tau = tau
+        self.actor, self.critic = self.create_net(state_dim, action_dim)
+        self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=self.lr)
+        self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=lr_critic)
+        self.actor_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.actor_optim, gamma=actor_gamma)
+        self.critic_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.critic_optim, gamma=critic_gamma)
 
-class TRPO(A2C):
-    """TRPO implementation: unfinished"""
-    def __init__(self, state_dim, action_dim, alpha=0.001, gamma=0.99, beta=0.1):
-        super().__init__(state_dim, action_dim, gamma=0.99, lr=0.001)
-        print("IMPLEMENTATION IS WRONG")
-        self.beta = beta
+    @torch.no_grad()
+    def get_action(self, state):
+        """Softmax Policy"""
+        preferences = self.actor(numpy_to_cuda(state))
+        action_dist = Categorical(preferences)
+        action = action_dist.sample()
+        return action.item()
 
-    def policy_loss(self, advantage, log_prob, policy):
-        policy_dist = Categorical(policy)
-        loss = -(log_prob - log_prob.detach()) * advantage.detach() - self.beta * (
-                policy * (policy.log() - policy.detach().log()))
+    def online_update(self, time_step, I):
+        state, action, reward, next_state, done = time_step
+
+        state_t = numpy_to_cuda(state)
+        next_state_t = numpy_to_cuda(next_state)
+
+        state_vs = self.critic(state_t)
+        next_state_values = self.critic(next_state_t).detach()
+
+        next_state_values[done] = 0
+
+        td_target = reward + self.gamma * next_state_values
+        advantage = td_target - state_vs
+
+        policy = self.actor(state_t)
+        policy_dist = torch.distributions.Categorical(policy)
+        log_prob = policy_dist.log_prob(torch.tensor([action]).to(DEVICE))
+
+        policy_loss = I * -self.policy_loss(advantage, log_prob, policy)
+        value_loss = self.mse_loss(state_vs, td_target)
+
+        self.actor_optim.zero_grad()
+        policy_loss.backward()
+        self.actor_optim.step()
+
+        self.critic_optim.zero_grad()
+        value_loss.backward()
+        self.critic_optim.step()
+
+        self.t += 1
+        if self.t >= self.tau:
+            self.critic_scheduler.step()
+            self.actor_scheduler.step()
+        return policy_loss+value_loss
+
+class PPOsplit(A2Csplit):
+    def __init__(self, state_dim, action_dim, critic_gamma=0.9, actor_gamma=0.9, tau=1000, lr_critic=3e-4, **kwargs):
+        super(PPOsplit, self).__init__(state_dim, action_dim, **kwargs)
+        self.t = 0
+        self.tau = tau
+        self.actor, self.critic = self.create_net(state_dim, action_dim)
+        self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=self.lr, eps=1e-5)
+        self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=lr_critic, eps=1e-5)
+        self.actor_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.actor_optim, gamma=actor_gamma)
+        self.critic_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.critic_optim, gamma=critic_gamma)
+
+    @torch.no_grad()
+    def get_action(self, state):
+        """Softmax Policy"""
+        preferences = self.actor(numpy_to_cuda(state))
+        action_dist = Categorical(logits=preferences)
+        action = action_dist.sample()
+        return action.item()
+
+    def online_update(self, time_step, I=1):
+        state, action, reward, next_state, done = time_step
+
+        state_t = numpy_to_cuda(state)
+        next_state_t = numpy_to_cuda(next_state)
+
+        state_vs = self.critic(state_t)
+        next_state_values = self.critic(next_state_t).detach()
+
+        next_state_values[done] = 0
+
+        td_target = reward + self.gamma * next_state_values
+        advantage = td_target - state_vs
+
+        policy = self.actor(state_t)
+        policy_dist = torch.distributions.Categorical(logits=policy)
+        log_prob = policy_dist.log_prob(torch.tensor([action]).to(DEVICE))
+
+        policy_loss = I * -self.policy_loss(advantage.detach(), log_prob, policy)
+        value_loss = self.mse_loss(state_vs, td_target)
+
+        self.actor_optim.zero_grad()
+        policy_loss.backward()
+        self.actor_optim.step()
+
+        self.critic_optim.zero_grad()
+        value_loss.backward()
+        self.critic_optim.step()
+
+        self.t += 1
+        if self.t >= self.tau:
+            self.critic_scheduler.step()
+            self.actor_scheduler.step()
+        return policy_loss + value_loss
+
+    def policy_loss(self, advantage, log_prob, _, weights=None):
+        ratio = (log_prob - log_prob.detach()).exp()
+        clipped_ratio = ratio.clamp(min=1.-self.epsilon, max=1.+self.epsilon)
+        loss = torch.min(ratio*advantage, clipped_ratio*advantage)
         return loss.mean()
 
+def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
+    torch.nn.init.orthogonal_(layer.weight, std)
+    torch.nn.init.constant_(layer.bias, bias_const)
+    return layer
 
+class Agent(nn.Module):
+    def __init__(self, envs):
+        super(Agent, self).__init__()
+        self.critic = nn.Sequential(
+            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 1), std=1.0),
+        )
+        self.actor = nn.Sequential(
+            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
+        )
 
+    def get_value(self, x):
+        return self.critic(x)
+
+    def get_action_and_value(self, x, action=None):
+        logits = self.actor(x)
+        probs = Categorical(logits=logits)
+        if action is None:
+            action = probs.sample()
+        return action, probs.log_prob(action), probs.entropy(), self.critic(x)

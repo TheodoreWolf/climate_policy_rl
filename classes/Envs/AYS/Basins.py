@@ -8,6 +8,10 @@ This enumeration is used to differ between the three possible outcomes in our mo
 """
 from enum import Enum
 class Basins(Enum):
-    OUT_PB=0
-    BROWN_FP=1
-    GREEN_FP=2
+    OUT_PB = 0
+    BROWN_FP = 1
+    GREEN_FP = 2
+
+    A_PB = 3
+    Y_PB = 4
+    S_PB = 5

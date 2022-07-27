@@ -5,6 +5,15 @@ import random
 import matplotlib.pyplot as plt
 from IPython.display import clear_output
 
+import torch.nn as nn
+import torch
+from torch.nn.utils.weight_norm import weight_norm
+from sklearn import preprocessing
+import shap
+import joblib
+import pandas as pd
+
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class ReplayBuffer:
     """To store experience for uncorrelated learning"""
@@ -29,19 +38,23 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
-def plot(frame_idx, rewards):
+def plot(frame_idx, rewards, std):
     """For tracking experiment progress"""
     clear_output(True)
     plt.figure(figsize=(20, 5))
     plt.subplot(131)
     plt.title('frame %s. reward: %s' % (frame_idx, rewards[-1]))
     plt.plot(rewards)
+    reward = np.array(rewards)
+    stds = np.array(std)
+    plt.fill_between(np.arange(len(reward)), reward-0.25*stds, reward+0.25*stds, color='b', alpha=0.1)
+    plt.fill_between(np.arange(len(reward)), reward-0.5 * stds, reward+0.5 * stds, color='b', alpha=0.1)
     plt.show()
 
 
-def plot_test_trajectory(env, agent, max_steps=600):
+def plot_test_trajectory(env, agent, max_steps=600, test_state=None):
     """To plot trajectories of the agent"""
-    state = env.reset_for_state()
+    state = env.reset_for_state(test_state)
     learning_progress = []
     for step in range(max_steps):
         list_state = env.get_plot_state_list()
@@ -168,3 +181,21 @@ class PER_IS_ReplayBuffer:
 
     def __len__(self):
         return self.size
+
+def feature_importance(agent_net, buffer, n_points, v=False):
+    features = ["Atmospheric Carbon", "Economic Output", "Renewable Stock"]
+    if v:
+        features = features + ["dA", "dY", "dS"]
+
+    data = buffer.sample(n_points, beta=1)["obs"]
+
+    explainer = shap.DeepExplainer(agent_net,
+                                   torch.from_numpy(data).float().to(DEVICE))
+    shap_q_values = explainer.shap_values(torch.from_numpy(data).float().to(DEVICE))
+    shap_values = np.array(np.max(shap_q_values, axis=0))
+
+
+    shap.summary_plot(shap_values, features=data, feature_names=features)
+
+
+

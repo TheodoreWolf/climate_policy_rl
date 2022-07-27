@@ -10,6 +10,7 @@ import random
 import numpy as np
 import torch
 import wandb
+from learn_class import learning
 
 
 class new_action:
@@ -113,7 +114,7 @@ class new_action:
         if plotting:
             utils.plot(frame_idx, mean_rewards)
             utils.plot_test_trajectory(env, agent)
-        return agent
+        return rewards
 
     def learning_loop_offline(self, agent_str, buffer_size, batch_size, per_is, notebook=False, plotting=False,
                               alpha=0.6, beta=0.4):

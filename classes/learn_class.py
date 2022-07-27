@@ -13,7 +13,7 @@ import wandb
 
 
 class learning:
-    def __init__(self, wandb_save=False, verbose=False, reward_type="PB", max_episodes=2000, max_steps=600, max_frames=1e5, max_epochs=50):
+    def __init__(self, wandb_save=False, verbose=False, reward_type="PB", max_episodes=2000, max_steps=600, max_frames=1e5, max_epochs=50, seed = 0):
 
         # environment
         self.env = AYS_Environment(reward_type=reward_type)
@@ -21,7 +21,6 @@ class learning:
         self.action_dim = len(self.env.action_space)
 
         # seeds
-        seed = 0
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
@@ -49,6 +48,7 @@ class learning:
 
         rewards = []
         mean_rewards = []
+        std_rewards = []
         frame_idx = 0
 
         for episodes in range(self.max_episodes):
@@ -86,7 +86,9 @@ class learning:
             # bookkeeping
             rewards.append(episode_reward)
             mean = np.mean(rewards[-50:])
+            std = np.std(rewards[-50:])
             mean_rewards.append(mean)
+            std_rewards.append(std)
 
             # we log or print depending on settings
             wandb.log({'episode_reward': episode_reward, "moving_average": mean}) if self.wandb_save else None
@@ -94,7 +96,7 @@ class learning:
 
             # for notebook
             if notebook and episodes % 10 == 0:
-                utils.plot(frame_idx, mean_rewards)
+                utils.plot(frame_idx, mean_rewards, std_rewards)
                 if episodes % 500 == 0:
                     utils.plot_test_trajectory(env, agent)
 
@@ -109,9 +111,9 @@ class learning:
             wandb.finish()
 
         if plotting:
-            utils.plot(frame_idx, mean_rewards)
+            utils.plot(frame_idx, mean_rewards, std_rewards)
             utils.plot_test_trajectory(env, agent)
-        return agent
+        return rewards
 
     def learning_loop_offline(self, agent_str, buffer_size, batch_size, per_is, notebook=False, plotting=False, alpha=0.6, beta=0.4):
 
@@ -119,7 +121,7 @@ class learning:
         env = self.env
 
         # initiate memory
-        memory = utils.PER_IS_ReplayBuffer(buffer_size, alpha=alpha) if per_is else utils.ReplayBuffer(buffer_size)
+        self.memory = utils.PER_IS_ReplayBuffer(buffer_size, alpha=alpha) if per_is else utils.ReplayBuffer(buffer_size)
 
         if agent_str != "DuelDQN" and agent_str != "DuelDDQN":
             print("wrong agents, use DQN agents: DuelDQN or DuelDDQN")
@@ -129,6 +131,7 @@ class learning:
 
         rewards = []
         mean_rewards = []
+        std_rewards = []
         frame_idx = 0
 
         for episodes in range(self.max_episodes):
@@ -148,7 +151,7 @@ class learning:
                 # add reward
                 episode_reward += reward
 
-                memory.push(state, action, reward, next_state, done)
+                self.memory.push(state, action, reward, next_state, done)
 
                 # prepare for next iteration
                 state = next_state
@@ -160,22 +163,26 @@ class learning:
 
             # bookkeeping
             rewards.append(episode_reward)
+
             mean = np.mean(rewards[-50:])
+            std = np.std(rewards[-50:])
+
             mean_rewards.append(mean)
+            std_rewards.append(std)
 
             for epoch in range(self.max_epochs):
-                if memory.__len__() > batch_size:
+                if self.memory.__len__() > batch_size:
                     if per_is:
                         beta = 1 - (1-beta) * np.exp(-0.005 * episodes)  # we converge beta to 1
-                        sample = memory.sample(batch_size, beta)
+                        sample = self.memory.sample(batch_size, beta)
                         loss, tds = agent.update(
                             (sample['obs'], sample['action'], sample['reward'], sample['next_obs'], sample['done']),
                             weights=sample['weights']
                         )
                         new_tds = np.abs(tds.cpu().numpy()) + 1e-6
-                        memory.update_priorities(sample['indexes'], new_tds)
+                        self.memory.update_priorities(sample['indexes'], new_tds)
                     else:
-                        sample = memory.sample(batch_size)
+                        sample = self.memory.sample(batch_size)
                         loss, _ = agent.update(sample)
 
                     wandb.log({'loss': loss}) if self.wandb_save else None
@@ -185,8 +192,8 @@ class learning:
 
             # for notebook
             if notebook and episodes % 10 == 0:
-                utils.plot(frame_idx, mean_rewards)
-                if episodes % 500 == 0:
+                utils.plot(frame_idx, mean_rewards, std_rewards)
+                if plotting and episodes % 200 == 0:
                     utils.plot_test_trajectory(env, agent)
 
             # if we spend too long in the simulation
@@ -200,9 +207,9 @@ class learning:
             wandb.finish()
 
         if plotting:
-            utils.plot(frame_idx, mean_rewards)
+            utils.plot(frame_idx, mean_rewards, std_rewards)
             utils.plot_test_trajectory(env, agent)
-        return agent
+        return rewards
 
     def set_agent(self, agent_str, **kwargs):
 
@@ -251,7 +258,7 @@ class MarkovState(learning):
                 episode_reward += reward
 
                 # update the agent with last experience
-                next_state_mkv = self.get_velocity(next_state, action)
+                next_state_mkv = self.get_augmented_state(state, state)
                 loss = agent.online_update((state_mkv, action, reward, next_state_mkv, done), I)
                 I *= agent.gamma
 
@@ -278,7 +285,7 @@ class MarkovState(learning):
             # for notebook
             if notebook and episodes % 10 == 0:
                 utils.plot(frame_idx, mean_rewards)
-                if episodes % 500 == 0:
+                if plotting and episodes % 500 == 0:
                     utils.plot_test_trajectory(env, agent)
 
             # if we spend a long time in the simulation
@@ -294,7 +301,7 @@ class MarkovState(learning):
         if plotting:
             utils.plot(frame_idx, mean_rewards)
             utils.plot_test_trajectory(env, agent)
-        return agent
+        return rewards
 
     def learning_loop_offline(self, agent_str, buffer_size, batch_size, per_is, notebook=False, plotting=False, alpha=0.6, beta=0.4):
 
@@ -302,7 +309,7 @@ class MarkovState(learning):
         env = self.env
 
         # initiate memory
-        memory = utils.PER_IS_ReplayBuffer(buffer_size, alpha=alpha, state_dim=self.state_dim) if per_is else utils.ReplayBuffer(buffer_size)
+        self.memory = utils.PER_IS_ReplayBuffer(buffer_size, alpha=alpha, state_dim=self.state_dim) if per_is else utils.ReplayBuffer(buffer_size)
 
         if agent_str != "DuelDQN" and agent_str != "DuelDDQN":
             print("wrong agents, use DQN agents: DuelDQN or DuelDDQN")
@@ -335,7 +342,7 @@ class MarkovState(learning):
                 # add reward
                 episode_reward += reward
 
-                memory.push(state_mkv, action, reward, next_state_mkv, done)
+                self.memory.push(state_mkv, action, reward, next_state_mkv, done)
 
                 # prepare for next iteration
                 state = next_state
@@ -352,18 +359,18 @@ class MarkovState(learning):
             mean_rewards.append(mean)
 
             for epoch in range(self.max_epochs):
-                if memory.__len__() > batch_size:
+                if self.memory.__len__() > batch_size:
                     if per_is:
                         beta = 1 - (1-beta) * np.exp(-0.005 * episodes)  # we converge beta to 1
-                        sample = memory.sample(batch_size, beta)
+                        sample = self.memory.sample(batch_size, beta)
                         loss, tds = agent.update(
                             (sample['obs'], sample['action'], sample['reward'], sample['next_obs'], sample['done']),
                             weights=sample['weights']
                         )
                         new_tds = np.abs(tds.cpu().numpy()) + 1e-6
-                        memory.update_priorities(sample['indexes'], new_tds)
+                        self.memory.update_priorities(sample['indexes'], new_tds)
                     else:
-                        sample = memory.sample(batch_size)
+                        sample = self.memory.sample(batch_size)
                         loss, _ = agent.update(sample)
 
                     wandb.log({'loss': loss}) if self.wandb_save else None
@@ -390,7 +397,7 @@ class MarkovState(learning):
         if plotting:
             utils.plot(frame_idx, mean_rewards)
             utils.plot_test_trajectory(env, agent)
-        return agent
+        return rewards
 
     def get_augmented_state(self, state, next_state):
         """Returns the velocity of the next state"""
@@ -418,7 +425,7 @@ if __name__=="__main__":
     # experiment = observability(verbose=True, max_episodes=3000)
     # experiment.set_agent("A2C", epsilon=0.01, lr=3e-4)
     # experiment.learning_loop_online("A2C", notebook=False, plotting=False)
-    experiment = observability(max_frames=1e6, max_episodes=2000, verbose=True)
+    experiment = MarkovState(max_frames=1e6, max_episodes=3000, verbose=True)
     experiment.set_agent("DuelDDQN", epsilon=0.1, lr=3e-4)
     experiment.learning_loop_offline("DuelDDQN", buffer_size=2 ** 14, batch_size=128, per_is=True, notebook=False,
                                      plotting=False)
