@@ -19,7 +19,7 @@ class learning:
                  max_epochs=50, seed=0, gamma=0.99, labda=0.95):
 
         # environment
-        self.env = AYS_Environment(reward_type=reward_type)
+        self.env = AYS_Environment(reward_type=reward_type, discount=gamma)
         self.state_dim = len(self.env.observation_space)
         self.action_dim = len(self.env.action_space)
 
@@ -76,6 +76,15 @@ class learning:
                     episodes += 1
                     print("Episode:", episodes, "|| Reward:", round(episode_reward),
                           "|| Final_state", env._which_final_state().name) if self.verbose else None
+                    # we log or print depending on settings
+                    # bookkeeping
+                    ep_rewards.append(episode_reward)
+                    mean = np.mean(ep_rewards[-50:])
+                    std = np.std(ep_rewards[-50:])
+                    mean_rewards.append(mean)
+                    std_rewards.append(std)
+                    wandb.log({'episode_reward': episode_reward, "moving_average": mean}) if self.wandb_save else None
+
                     episode_reward = 0
                     next_state = torch.Tensor(env.reset()).to(DEVICE)
 
@@ -108,18 +117,8 @@ class learning:
                                   logprobs[batch_idx],
                                   advantages[batch_idx], returns[batch_idx]))
 
-            # agent.critic_scheduler.step()
-            # agent.actor_scheduler.step()
-
-            # bookkeeping
-            ep_rewards.append(episode_reward)
-            mean = np.mean(ep_rewards[-50:])
-            std = np.std(ep_rewards[-50:])
-            mean_rewards.append(mean)
-            std_rewards.append(std)
-
-            # we log or print depending on settings
-            wandb.log({'episode_reward': episode_reward, "moving_average": mean}) if self.wandb_save else None
+            agent.critic_scheduler.step()
+            agent.actor_scheduler.step()
 
             # for notebook
             if notebook and episodes % 10 == 0:
