@@ -169,7 +169,7 @@ class AYS_Environment(Env):
         if self.final_state:
             reward += self.calculate_expected_final_reward()
 
-        return self.state, reward, self.final_state
+        return self.state, reward, self.final_state, None
 
     def _perform_step(self, action, next_t):
         parameter_list = self._get_parameters(action)
@@ -387,6 +387,8 @@ class AYS_Environment(Env):
             return Basins.Y_PB
         elif self.state[2] <= 0:
             return Basins.S_PB
+        else:
+            pass
 
     def get_plot_state_list(self):
         return self.state.tolist()

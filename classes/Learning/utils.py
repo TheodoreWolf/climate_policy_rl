@@ -197,5 +197,3 @@ def feature_importance(agent_net, buffer, n_points, v=False):
 
     shap.summary_plot(shap_values, features=data, feature_names=features)
 
-
-

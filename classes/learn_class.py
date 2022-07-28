@@ -11,9 +11,12 @@ import numpy as np
 import torch
 import wandb
 
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class learning:
-    def __init__(self, wandb_save=False, verbose=False, reward_type="PB", max_episodes=2000, max_steps=600, max_frames=1e5, max_epochs=50, seed = 0):
+    def __init__(self, wandb_save=False, verbose=False, reward_type="PB",
+                 max_episodes=2000, max_steps=600, max_frames=1e5,
+                 max_epochs=50, seed=0, gamma=0.99, labda=0.95):
 
         # environment
         self.env = AYS_Environment(reward_type=reward_type)
@@ -34,6 +37,110 @@ class learning:
         # saving in wandb or logging
         self.wandb_save = wandb_save
         self.verbose = verbose
+
+        # computing returns
+        self.gamma = gamma
+        self.labda = labda
+
+    def learning_loop_rollout(self, batch_size, buffer_size, notebook=False, plotting=False):
+        # we implement rollout updates for PPO
+        wandb.init() if self.wandb_save else None
+        env = self.env
+
+        agent = self.agent
+
+        ep_rewards = []
+        mean_rewards = []
+        std_rewards = []
+        frame_idx = 0
+        episode_reward = 0
+        episodes = 0
+        next_state = torch.Tensor(env.reset()).to(DEVICE)
+        next_done = torch.zeros(1).to(DEVICE)
+
+        for update in range(int(self.max_frames//buffer_size)):
+
+            obs = torch.zeros((buffer_size, self.state_dim)).to(DEVICE)
+            actions = torch.zeros(buffer_size).to(DEVICE)
+            logprobs = torch.zeros(buffer_size).to(DEVICE)
+            rewards = torch.zeros(buffer_size).to(DEVICE)
+            dones = torch.zeros(buffer_size).to(DEVICE)
+            values = torch.zeros(buffer_size).to(DEVICE)
+
+            for i in range(buffer_size):
+
+                frame_idx += 1
+                dones[i] = next_done
+                obs[i] = next_state
+                if next_done:
+                    episodes += 1
+                    print("Episode:", episodes, "|| Reward:", round(episode_reward),
+                          "|| Final_state", env._which_final_state().name) if self.verbose else None
+                    episode_reward = 0
+                    next_state = torch.Tensor(env.reset()).to(DEVICE)
+
+
+                # get action and other stuff
+                with torch.no_grad():
+                    action, log_prob, entropy, value = agent.get_action_and_value(next_state)
+
+                # step through environment
+                next_state, reward, done, _ = env.step(action)
+
+                actions[i] = action
+                logprobs[i] = log_prob
+                rewards[i] = reward
+                values[i] = value
+                next_state, next_done = torch.Tensor(next_state).to(DEVICE), torch.Tensor([done]).to(DEVICE)
+                episode_reward += reward
+            with torch.no_grad():
+                next_value = agent.critic(next_state)
+            returns, advantages = self.compute_gae(values, dones, rewards, next_value, next_done)
+            buffer_idx = np.arange(buffer_size)
+
+            for epochs in range(self.max_epochs):
+                np.random.shuffle(buffer_idx)
+                for start in range(0, buffer_size, batch_size):
+                    end = start + batch_size
+                    batch_idx = buffer_idx[start:end]
+                    agent.update((obs[batch_idx], actions[batch_idx],values[batch_idx],
+                                 rewards[batch_idx], dones[batch_idx],
+                                  logprobs[batch_idx],
+                                  advantages[batch_idx], returns[batch_idx]))
+
+            # agent.critic_scheduler.step()
+            # agent.actor_scheduler.step()
+
+            # bookkeeping
+            ep_rewards.append(episode_reward)
+            mean = np.mean(ep_rewards[-50:])
+            std = np.std(ep_rewards[-50:])
+            mean_rewards.append(mean)
+            std_rewards.append(std)
+
+            # we log or print depending on settings
+            wandb.log({'episode_reward': episode_reward, "moving_average": mean}) if self.wandb_save else None
+
+            # for notebook
+            if notebook and episodes % 10 == 0:
+                utils.plot(frame_idx, mean_rewards, std_rewards)
+                if episodes % 500 == 0:
+                    utils.plot_test_trajectory(env, agent)
+
+            # if we spend a long time in the simulation
+            if frame_idx > self.max_frames:
+                break
+
+        # log and show final trajectory
+        if self.wandb_save:
+            wandb.run.summary["mean_reward"] = np.mean(ep_rewards)
+            wandb.run.summary["top_reward"] = max(ep_rewards)
+            wandb.finish()
+
+        if plotting:
+            utils.plot(frame_idx, mean_rewards, std_rewards)
+            utils.plot_test_trajectory(env, agent)
+        return ep_rewards
 
     def learning_loop_online(self, agent_str, notebook=False, plotting=False):
 
@@ -92,7 +199,8 @@ class learning:
 
             # we log or print depending on settings
             wandb.log({'episode_reward': episode_reward, "moving_average": mean}) if self.wandb_save else None
-            print("Episode:", episodes, "|| Reward:", round(episode_reward),"|| Final State ", env._which_final_state().name) if self.verbose else None
+            print("Episode:", episodes, "|| Reward:", round(episode_reward),
+                  "|| Final State ", env._which_final_state().name) if self.verbose else None
 
             # for notebook
             if notebook and episodes % 10 == 0:
@@ -115,7 +223,8 @@ class learning:
             utils.plot_test_trajectory(env, agent)
         return rewards
 
-    def learning_loop_offline(self, agent_str, buffer_size, batch_size, per_is, notebook=False, plotting=False, alpha=0.6, beta=0.4):
+    def learning_loop_offline(self, agent_str, buffer_size, batch_size, per_is, notebook=False,
+                              plotting=False, alpha=0.6, beta=0.4):
 
         wandb.init() if self.wandb_save else None
         env = self.env
@@ -215,6 +324,21 @@ class learning:
 
         self.agent = eval("ag."+agent_str)(self.state_dim, self.action_dim, **kwargs)
 
+    def compute_gae(self, values, dones, rewards, next_value, next_done):
+        last_adv = 0
+        buffer_size = len(rewards)
+        advantages = torch.zeros_like(rewards).to(DEVICE)
+        for t in reversed(range(buffer_size)):
+            if t == buffer_size - 1:
+                nextnonterminal = 1.0 - next_done
+                nextvalues = next_value
+            else:
+                nextnonterminal = 1.0 - dones[t + 1]
+                nextvalues = values[t + 1]
+            delta = rewards[t] + self.gamma * nextvalues * nextnonterminal - values[t]
+            advantages[t] = last_adv = delta + self.gamma * self.labda * nextnonterminal * last_adv
+        returns = advantages + values
+        return returns, advantages
 
 class MarkovState(learning):
     def __init__(self, wandb_save=False, verbose=False, reward_type="PB", max_episodes=2000, max_steps=600, max_frames=1e5, max_epochs=50):
@@ -233,6 +357,7 @@ class MarkovState(learning):
 
         rewards = []
         mean_rewards = []
+        std_rewards = []
         frame_idx = 0
 
         for episodes in range(self.max_episodes):
@@ -258,7 +383,7 @@ class MarkovState(learning):
                 episode_reward += reward
 
                 # update the agent with last experience
-                next_state_mkv = self.get_augmented_state(state, state)
+                next_state_mkv = self.get_diff_state(state, state)
                 loss = agent.online_update((state_mkv, action, reward, next_state_mkv, done), I)
                 I *= agent.gamma
 
@@ -275,8 +400,10 @@ class MarkovState(learning):
 
             # bookkeeping
             rewards.append(episode_reward)
+            std = np.std(rewards[-50:])
             mean = np.mean(rewards[-50:])
             mean_rewards.append(mean)
+            std_rewards.append(std)
 
             # we log or print depending on settings
             wandb.log({'episode_reward': episode_reward, "moving_average": mean}) if self.wandb_save else None
@@ -284,7 +411,7 @@ class MarkovState(learning):
 
             # for notebook
             if notebook and episodes % 10 == 0:
-                utils.plot(frame_idx, mean_rewards)
+                utils.plot(frame_idx, mean_rewards, std_rewards)
                 if plotting and episodes % 500 == 0:
                     utils.plot_test_trajectory(env, agent)
 
@@ -299,7 +426,7 @@ class MarkovState(learning):
             wandb.finish()
 
         if plotting:
-            utils.plot(frame_idx, mean_rewards)
+            utils.plot(frame_idx, mean_rewards, std_rewards)
             utils.plot_test_trajectory(env, agent)
         return rewards
 
@@ -399,11 +526,11 @@ class MarkovState(learning):
             utils.plot_test_trajectory(env, agent)
         return rewards
 
-    def get_augmented_state(self, state, next_state):
+    def get_diff_state(self, state, next_state):
         """Returns the velocity of the next state"""
         return np.hstack((next_state, next_state-state))
 
-    def get_velocity(self, next_state, action):
+    def get_velocity_state(self, next_state, action):
         A, Y, S = next_state
 
         sigma = [4e12, 4e12, 2.83e12, 2.83e12]
@@ -422,11 +549,10 @@ class MarkovState(learning):
         return np.hstack((next_state, v))
 
 if __name__=="__main__":
-    # experiment = observability(verbose=True, max_episodes=3000)
-    # experiment.set_agent("A2C", epsilon=0.01, lr=3e-4)
-    # experiment.learning_loop_online("A2C", notebook=False, plotting=False)
-    experiment = MarkovState(max_frames=1e6, max_episodes=3000, verbose=True)
-    experiment.set_agent("DuelDDQN", epsilon=0.1, lr=3e-4)
-    experiment.learning_loop_offline("DuelDDQN", buffer_size=2 ** 14, batch_size=128, per_is=True, notebook=False,
-                                     plotting=False)
-
+    # experiment = MarkovState(max_frames=1e6, max_episodes=3000, verbose=True)
+    # experiment.set_agent("PPOsplit", epsilon=0.1, lr=3e-4)
+    # experiment.learning_loop_offline("PPOsplit", buffer_size=2 ** 14, batch_size=128, per_is=True, notebook=False,
+    #                                  plotting=False)
+    experiment = learning(max_frames=1e5, verbose=True, max_epochs=10)
+    experiment.set_agent("PPOsplit", epsilon=0.0, max_grad_norm=1000, )
+    experiment.learning_loop_rollout(64, 640)
