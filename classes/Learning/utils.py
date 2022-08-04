@@ -2,16 +2,11 @@
 
 import numpy as np
 import random
-import matplotlib.pyplot as plt
 from IPython.display import clear_output
-
-import torch.nn as nn
 import torch
-from torch.nn.utils.weight_norm import weight_norm
-from sklearn import preprocessing
 import shap
-import joblib
-import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -38,8 +33,11 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
-def plot(frame_idx, rewards, std):
+def plot(data_dict):
     """For tracking experiment progress"""
+    rewards = data_dict['moving_avg_rewards']
+    std = data_dict['moving_std_rewards']
+    frame_idx = data_dict['frame_idx']
     clear_output(True)
     plt.figure(figsize=(20, 5))
     plt.subplot(131)
@@ -63,7 +61,7 @@ def plot_test_trajectory(env, agent, max_steps=600, test_state=None):
         action = agent.get_action(state)
 
         # Do the new chosen action in Environment
-        new_state, reward, done = env.step(action)
+        new_state, reward, done, _ = env.step(action)
 
         learning_progress.append([list_state, action, reward])
 
@@ -73,7 +71,7 @@ def plot_test_trajectory(env, agent, max_steps=600, test_state=None):
 
     env.plot_run(learning_progress)
 
-    return env._which_final_state()
+    return env.which_final_state()
 
 
 class PER_IS_ReplayBuffer:
@@ -182,12 +180,13 @@ class PER_IS_ReplayBuffer:
     def __len__(self):
         return self.size
 
+
 def feature_importance(agent_net, buffer, n_points, v=False):
     features = ["Atmospheric Carbon", "Economic Output", "Renewable Stock"]
     if v:
         features = features + ["dA", "dY", "dS"]
 
-    data = buffer.sample(n_points, beta=1)["obs"]
+    data = buffer.sample(n_points)[0]
 
     explainer = shap.DeepExplainer(agent_net,
                                    torch.from_numpy(data).float().to(DEVICE))
@@ -197,3 +196,15 @@ def feature_importance(agent_net, buffer, n_points, v=False):
 
     shap.summary_plot(shap_values, features=data, feature_names=features)
 
+def plot_matrix(results):
+    t = 1
+    size = int(np.sqrt(len(results)))
+    cmap = {1: [0.6, 0.3, 0., t], 2: [0., 1.0, 0., t], 3: [1.0, 0.1, 0.1, t], 4: [1., 1., 0., t]}
+    labels = {1: 'Brown_FP', 2: 'Green_FP', 3: 'A_PB', 4: 'Y_PB'}
+    arrayShow = np.array([[cmap[i] for i in j] for j in results.reshape(size, size)])
+    patches = [mpatches.Patch(color=cmap[i], label=labels[i]) for i in cmap]
+    plt.imshow(arrayShow, extent=(0.45, 0.55, 0.45, 0.55))
+    plt.legend(handles=patches, borderaxespad=0.)
+    plt.ylabel("Y")
+    plt.xlabel("A")
+    plt.show()

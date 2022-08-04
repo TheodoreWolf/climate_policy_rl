@@ -1,11 +1,14 @@
-# @Theodore Wolf
+"""
+@Theodore Wolf
+A few simple networks that can be used by different types of agents
+"""
 
 import torch.nn as nn
 import torch.nn.functional as F
 
 
 class PolicyNet(nn.Module):
-    """Outputs action preferences"""
+    """Outputs action preferences, to be used by Actor-critics"""
     def __init__(self, state_dim, action_dim, hidden_dim=256):
         super(PolicyNet, self).__init__()
         self.layer = nn.Sequential(nn.Linear(state_dim, hidden_dim), nn.ReLU(),
@@ -17,9 +20,7 @@ class PolicyNet(nn.Module):
     def forward(self, obs):
         l = self.layer(obs)
         out = self.a(l)
-        #prefs = F.softmax(out, dim=-1)
 
-        #return prefs
         return out
 
 
@@ -41,14 +42,32 @@ class Net(nn.Module):
         return q_values
 
 
+class ActionInNet(nn.Module):
+    """Outputs Q-values for each action"""
+    def __init__(self, state_dim, action_dim, hidden_dim=256):
+        super(ActionInNet, self).__init__()
+
+        self.layer = nn.Sequential(nn.Linear(state_dim, hidden_dim), nn.ReLU(),
+                                   nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+                                   )
+
+        self.q = nn.Linear(hidden_dim, action_dim)
+
+    def forward(self, obs):
+        l = self.layer(obs)
+        q_values = self.q(l)
+
+        return q_values
+
+
 class DuellingNet(nn.Module):
-    """Outputs advantages for each action"""
+    """Outputs duelling Q-values for each action"""
     def __init__(self, state_dim, action_dim, hidden_dim=256):
         super(DuellingNet, self).__init__()
 
         self.layer = nn.Sequential(nn.Linear(state_dim, hidden_dim), nn.ReLU(),
                                    nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-                                   nn.Linear(hidden_dim, hidden_dim), nn.ReLU()
+                                   #nn.Linear(hidden_dim, hidden_dim), nn.ReLU()
                                    )
 
         self.a = nn.Linear(hidden_dim, action_dim)
@@ -62,14 +81,14 @@ class DuellingNet(nn.Module):
 
         return a_values
 
+
 class DualACNET(nn.Module):
-    """Outputs advantages for each action"""
+    """Outputs both the value for the state and the action preferences"""
     def __init__(self, state_dim, action_dim, hidden_dim=256):
         super(DualACNET, self).__init__()
 
         self.layer = nn.Sequential(nn.Linear(state_dim, hidden_dim), nn.ReLU(),
                                    nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-                                   #nn.Linear(hidden_dim, hidden_dim), nn.ReLU()
                                    )
 
         self.dist = nn.Linear(hidden_dim, action_dim)

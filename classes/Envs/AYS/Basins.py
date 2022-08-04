@@ -15,3 +15,5 @@ class Basins(Enum):
     A_PB = 3
     Y_PB = 4
     S_PB = 5
+
+    OUT_OF_TIME = 6

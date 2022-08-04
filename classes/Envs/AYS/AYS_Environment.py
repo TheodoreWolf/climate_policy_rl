@@ -190,7 +190,7 @@ class AYS_Environment(Env):
         return self.state
 
     def reset_for_state(self, state=None):
-        if state == None:
+        if state is None:
             self.start_state = self.state = np.array(self.current_state)
         else:
             self.start_state = self.state = np.array(state)
@@ -269,14 +269,14 @@ class AYS_Environment(Env):
                     reward -= self.management_cost  # we add more cost for using both actions
             return reward
 
-        def time_is_money(action=0):
+        def simple(action=0):
             """@Theo Wolf, we want the agent to go as fast as possible"""
             if self._inside_planetary_boundaries():
                 reward = 0
             else:
-                reward = -10
+                reward = -1
             if self._good_final_state():
-                reward = 10
+                reward = 1
             return reward
 
         def reward_distance_PB(action=0):
@@ -300,8 +300,8 @@ class AYS_Environment(Env):
             return reward_survive_cost
         elif choice_of_reward == "policy_cost":
             return policy_cost
-        elif choice_of_reward == "time":
-            return time_is_money
+        elif choice_of_reward == "simple":
+            return simple
         elif choice_of_reward == None:
             print("ERROR! You have to choose a reward function!\n",
                   "Available Reward functions for this environment are: PB, rel_share, survive, desirable_region!")
@@ -366,7 +366,7 @@ class AYS_Environment(Env):
         else:
             return False
 
-    def _which_final_state(self):
+    def which_final_state(self):
         a, y, s = self.state
         if np.abs(a - self.green_fp[0]) < self.final_radius and np.abs(
                 y - self.green_fp[1]) < self.final_radius and np.abs(s - self.green_fp[2]) < self.final_radius:
@@ -388,7 +388,7 @@ class AYS_Environment(Env):
         elif self.state[2] <= 0:
             return Basins.S_PB
         else:
-            pass
+            return Basins.OUT_OF_TIME
 
     def get_plot_state_list(self):
         return self.state.tolist()
@@ -478,7 +478,7 @@ class AYS_Environment(Env):
         # self.plot_current_state_trajectories(ax3d)
         ays_plot.plot_hairy_lines(300, ax3d)
 
-        final_state = self._which_final_state().name
+        final_state = self.which_final_state().name
 
         plt.show()
 
@@ -499,7 +499,7 @@ class AYS_Environment(Env):
                         color=my_color, alpha=.7, label=None)
 
     def save_traj_final_state(self, learners_path, file_path, episode):
-        final_state = self._which_final_state().name
+        final_state = self.which_final_state().name
 
         states = np.array(learners_path)[:, 0]
         start_state = states[0]
