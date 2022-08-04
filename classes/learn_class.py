@@ -50,7 +50,7 @@ class Learning:
                      'final_point': []
                      }
 
-    def learning_loop_rollout(self, batch_size, buffer_size, notebook=False, plotting=False):
+    def learning_loop_rollout(self, batch_size, buffer_size, notebook=False, plotting=False, config=None):
         """For PPO and A2C, these can't be updated fully offline"""
 
         if str(self.agent) == "A2C":
@@ -58,7 +58,8 @@ class Learning:
                                          "max_epochs must be set to 1."
             assert batch_size == buffer_size, "A2C is on-policy, can't update in mini-batches."
 
-        wandb.init() if self.wandb_save else None
+        wandb.init(project="AYS_learning", entity="climate_policy_optim", config=config, job_type=str(self.agent)) \
+            if self.wandb_save else None
 
         # initialise recursive variables
         episode_reward = 0
@@ -91,7 +92,7 @@ class Learning:
                           "|| Final_state", self.env.which_final_state().name) if self.verbose else None
 
                     wandb.log({'episode_reward': episode_reward,
-                               "moving_average": self.data['moving_avg_reward'][-1]}) if self.wandb_save else None
+                               "moving_average": self.data['moving_avg_rewards'][-1]}) if self.wandb_save else None
 
                     episode_reward = 0
                     next_state = torch.Tensor(self.env.reset()).to(DEVICE)
@@ -158,11 +159,11 @@ class Learning:
             utils.plot_test_trajectory(self.env, self.agent)
 
     def learning_loop_offline(self, batch_size, buffer_size, per_is, notebook=False,
-                              plotting=False, alpha=0.4, beta=0.2):
+                              plotting=False, alpha=0.4, beta=0.2, config=None):
         """For DQN-based agents which can be updated offline which is more data efficient """
 
-        wandb.init() if self.wandb_save else None
-
+        wandb.init(project="AYS_learning", entity="climate_policy_optim", config=config, job_type=str(self.agent)) \
+            if self.wandb_save else None
         # initiate memory
         self.memory = utils.PER_IS_ReplayBuffer(buffer_size, alpha=alpha) if per_is else utils.ReplayBuffer(buffer_size)
 
@@ -219,7 +220,7 @@ class Learning:
 
             # we log or print depending on settings
             wandb.log({'episode_reward': episode_reward,
-                       "moving_average": self.data['moving_avg_reward']}) if self.wandb_save else None
+                       "moving_average": self.data['moving_avg_rewards'][-1]}) if self.wandb_save else None
 
             print("Episode:", episodes, "|| Reward:", round(episode_reward), "|| Final State ",
                   self.env.which_final_state().name) if self.verbose else None
@@ -238,6 +239,7 @@ class Learning:
         if self.wandb_save:
             wandb.run.summary["mean_reward"] = np.mean(self.data['rewards'])
             wandb.run.summary["top_reward"] = max(self.data['rewards'])
+            wandb.log(self.data)
             wandb.finish()
 
         if plotting:
