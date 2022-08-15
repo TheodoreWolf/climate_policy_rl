@@ -11,12 +11,17 @@ except:
     import networks as nets
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-numpy_to_cuda = lambda numpy_array: torch.from_numpy(numpy_array).float().to(DEVICE)
+
+
+def numpy_to_cuda(numpy_array):
+    return torch.from_numpy(numpy_array).float().to(DEVICE)
+
 
 class DQN:
     """DQN implementation with epsilon greedy actions selection"""
 
-    def __init__(self, state_dim, action_dim, gamma=0.99, lr=0.0015, tau=0.04, rho=0.8, epsilon=0.3, polyak=False):
+    def __init__(self, state_dim, action_dim, gamma=0.99, lr=0.0026, tau=0.1, rho=0.60, epsilon=0.25, polyak=False,
+                 decay=0.999):
 
         # create simple networks that output Q-values, both target and policy are identical
         self.target_net = self.create_net(state_dim, action_dim, duelling=False).to(DEVICE)
@@ -24,7 +29,9 @@ class DQN:
 
         # We use the Adam optimizer
         self.lr = lr
+        self.decay = decay
         self.optimizer = torch.optim.Adam(self.policy_net.parameters(), lr=self.lr)
+        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=self.decay)
         self.action_size = action_dim
         self.gamma = gamma
 
@@ -52,10 +59,10 @@ class DQN:
         return net
 
     @torch.no_grad()
-    def get_action(self, state: np.array) -> torch.tensor:
+    def get_action(self, state: np.array, testing=False) -> np.array:
         """We select actions according to epsilon-greedy policy"""
         self.t += 1
-        if np.random.uniform() > self.epsilon(self.t):
+        if np.random.uniform() > self.epsilon(self.t) or testing:
             q_values = self.policy_net(torch.Tensor(state).to(DEVICE)).cpu().numpy()
             return np.argmax(q_values)
         else:
@@ -121,12 +128,14 @@ class DQN:
 
 class DuelDDQN(DQN):
     """Implementation of DuelDDQN, inspired by RAINBOW"""
+
     def __init__(self, state_dim, action_dim, **kwargs):
-        super(DuelDDQN, self).__init__(state_dim, action_dim, **kwargs)
+        super(DuelDDQN, self).__init__(state_dim, action_dim, lr=0.0076, epsilon=0.87, rho=0.76, tau=0.1, **kwargs)
         # create duelling networks that output Q-values, both target and policy are identical
         self.target_net = self.create_net(state_dim, action_dim, duelling=True).to(DEVICE)
         self.policy_net = self.create_net(state_dim, action_dim, duelling=True).to(DEVICE)
         self.optimizer = torch.optim.Adam(self.policy_net.parameters(), lr=self.lr)
+        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=self.decay)
 
     def next_state_value_estimation(self, next_states, done):
         # next state value estimation is different for DDQN
@@ -145,10 +154,10 @@ class DuelDDQN(DQN):
 class A2C:
     """Implementation of the Advantage Actor Critic with entropy regularisation"""
 
-    def __init__(self, state_dim, action_dim, gamma=0.99, epsilon=0.001, lamda=0.85,
-                 lr_actor=3e-4, lr_critic=3e-4,
-                 actor_decay=0.9, critic_decay=0.9,
-                 max_grad_norm=100, critic_param=1.):
+    def __init__(self, state_dim, action_dim, gamma=0.99, epsilon=0.002, lamda=0.81,
+                 lr_actor=0.004, lr_critic=0.0013,
+                 actor_decay=1., critic_decay=1.,
+                 max_grad_norm=100):
         # create networks and optimizers
         self.actor, self.critic = self.create_net(state_dim, action_dim)
         self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=lr_actor, eps=1e-5)
@@ -161,7 +170,6 @@ class A2C:
         self.action_size = action_dim
         self.gamma = gamma
         self.lamda = lamda
-        self.critic_param = critic_param
 
         self.value_loss = nn.MSELoss()
         self.max_grad_norm = max_grad_norm
@@ -189,9 +197,6 @@ class A2C:
         # unpack mini-batch, already torch.cuda tensors
         states, actions, values, rewards, dones, log_probs, advantages, returns = mini_batch_sample
 
-        # normalisation of advantages at the mini-batch level
-        advantages = ((advantages - advantages.mean()) / (advantages.std() + 1e-8)).detach()
-
         # get some gradients
         _, new_log_probs, entropies, new_values = self.get_action_and_value(states, actions.long())
 
@@ -209,9 +214,11 @@ class A2C:
         nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
         self.actor_optim.step()
 
+        return policy_loss, value_loss
+
     def policy_loss(self, advantages, new_log_probs, log_probs, entropies):
         """A2C on-policy loss"""
-        loss = (-advantages * new_log_probs - self.epsilon * entropies).mean()
+        loss = (-advantages.detach() * new_log_probs - self.epsilon * entropies).mean()
 
         return loss
 
@@ -233,23 +240,30 @@ class A2C:
         return returns, advantages
 
     @torch.no_grad()
-    def get_action(self, state):
+    def get_action(self, state, testing=True):
         """For plotting trajectories"""
         preferences = self.actor(numpy_to_cuda(state))
-        probs = Categorical(logits=preferences)
-        action = probs.sample()
-        return action
+        if testing:
+            action = torch.argmax(preferences)
+        else:
+            probs = Categorical(logits=preferences)
+            action = probs.sample()
+        return action.item()
 
     def __str__(self):
         return "A2C"
 
 
 class PPO(A2C):
-    def __init__(self, *args, clip=0.2, **kwargs):
-        super(PPO, self).__init__(*args, **kwargs)
+    def __init__(self, *args, clip=0.26, **kwargs):
+        super(PPO, self).__init__(*args, lr_actor=0.0007, lr_critic=0.009, epsilon=0.2, lamda=0.81,
+                                  critic_decay=0.9, actor_decay=0.9, max_grad_norm=100, **kwargs)
         self.clip = clip
 
     def policy_loss(self, advantages, new_log_probs, log_probs, entropies):
+        # normalisation of advantages at the mini-batch level
+        advantages = ((advantages - advantages.mean()) / (advantages.std() + 1e-20)).detach()
+
         log_ratio = new_log_probs - log_probs
         ratio = log_ratio.exp()
         clipped_ratio = ratio.clamp(min=1. - self.clip, max=1. + self.clip)

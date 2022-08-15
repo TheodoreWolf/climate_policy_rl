@@ -3,7 +3,8 @@ This is the implementation of the AYS Environment in the form
 that it can used within the Agent-Environment interface 
 in combination with the DRL-agent.
 
-@author: Felix Strnad
+@author: Felix Strnad, Theodore Wolf
+
 """
 
 import sys
@@ -103,7 +104,7 @@ class AYS_Environment(Env):
 
     def __init__(self, discount=0.99, t0=0, dt=1, reward_type='PB', max_steps=600, image_dir='./images/', run_number=0,
                  plot_progress=False):
-        self.management_cost = 0.5
+        self.management_cost = -0.001
         self.image_dir = image_dir
         self.run_number = run_number
         self.plot_progress = plot_progress
@@ -145,9 +146,9 @@ class AYS_Environment(Env):
         self.S_LIMIT = 0
         self.PB = [self.A_PB, self.Y_SF, 0]
 
-        print("Init AYS Environment!",
-              "\nReward Type: " + reward_type,
-              "\nSustainability Boundaries [A_PB, Y_SF, S_ren]: ", inv_compactification(self.PB, self.X_MID))
+        # print("Init AYS Environment!",
+        #       "\nReward Type: " + reward_type,
+        #       "\nSustainability Boundaries [A_PB, Y_SF, S_ren]: ", inv_compactification(self.PB, self.X_MID))
 
     def step(self, action: int):
         """
@@ -172,7 +173,10 @@ class AYS_Environment(Env):
         return self.state, reward, self.final_state, None
 
     def _perform_step(self, action, next_t):
+        # if type(action) == "np.array":
         parameter_list = self._get_parameters(action)
+        # else:
+        #     parameter_list = [action]
 
         traj_one_step = odeint(ays.AYS_rescaled_rhs, self.state, [self.t, next_t], args=parameter_list[0], mxstep=50000)
 
@@ -258,11 +262,13 @@ class AYS_Environment(Env):
             return reward
 
         def policy_cost(action=0):
-            """@Theo Wolf, we add a cost to using management options but guide the agent with PBs"""
+            """@Theo Wolf, we add a cost to using management options """
             if self._inside_planetary_boundaries():
-                reward = np.linalg.norm(self.state - self.PB)
-            else:
                 reward = 0
+            else:
+                reward = -1
+            if self._good_final_state():
+                reward = 1
             if self.management_options[action] != 'default':
                 reward -= self.management_cost  # cost of using management
                 if self.management_options[action] == 'LG+ET':
@@ -270,7 +276,7 @@ class AYS_Environment(Env):
             return reward
 
         def simple(action=0):
-            """@Theo Wolf, we want the agent to go as fast as possible"""
+            """@Theo Wolf, much simpler scheme that achieves what we actually want: go green"""
             if self._inside_planetary_boundaries():
                 reward = 0
             else:
@@ -374,7 +380,7 @@ class AYS_Environment(Env):
             return Basins.GREEN_FP
         elif np.abs(a - self.brown_fp[0]) < self.final_radius and np.abs(
                 y - self.brown_fp[1]) < self.final_radius and np.abs(s - self.brown_fp[2]) < self.final_radius:
-            return Basins.BROWN_FP
+            return Basins.BLACK_FP
         else:
             # return Basins.OUT_PB
             return self._which_PB()
@@ -384,7 +390,7 @@ class AYS_Environment(Env):
         if self.state[0] >= self.A_PB:
             return Basins.A_PB
         elif self.state[1] <= self.Y_SF:
-            return Basins.Y_PB
+            return Basins.Y_SF
         elif self.state[2] <= 0:
             return Basins.S_PB
         else:
@@ -456,7 +462,7 @@ class AYS_Environment(Env):
 
         return parameter_list
 
-    def plot_run(self, learning_progress):
+    def plot_run(self, learning_progress, fname=None):
         timeStart = 0
         intSteps = 2  # integration Steps
         dt = 1
@@ -479,7 +485,8 @@ class AYS_Environment(Env):
         ays_plot.plot_hairy_lines(300, ax3d)
 
         final_state = self.which_final_state().name
-
+        if fname is not None:
+            plt.savefig(fname)
         plt.show()
 
         return final_state
@@ -673,3 +680,92 @@ class noisy_partially_observable_AYS(AYS_Environment):
         #         print("Reset to state: " , return_state)
 
         return return_state
+
+
+class noisy_AYS(AYS_Environment):
+    def __init__(self, noise_strength=1e-5, **kwargs):
+        super(noisy_AYS, self).__init__(**kwargs)
+        self.noise = noise_strength
+        self.counter = 1
+
+    def reset(self):
+        """We change the reset such that every episode has ever so slightly different parameters"""
+        self.state = np.array(self.current_state_region_StartPoint())
+        self.final_state = False
+        self.t = self.t0
+        self.counter += 1
+        if self.counter%100 == 0:
+            # self.noise *= 10
+            print(self.tau_S, self.tau_A, self.beta, self.sigma, self.rho, self.phi, self.eps)
+        # new method
+        self.inject_noise()
+
+        return self.state
+
+    def inject_noise(self):
+        """We inject noise into the parameters of the system to add interpretability"""
+
+        self.tau_A = 50 * np.random.normal(1, self.noise)
+        self.tau_A = 50 * np.random.normal(1, self.noise)
+        self.beta = 8.57e-5 * np.random.normal(1, self.noise)
+        self.sigma = 147 * np.random.normal(1, self.noise)
+        self.rho = 2. * np.random.normal(1, self.noise)
+        self.phi = 4.7e10 * np.random.normal(1, self.noise)
+        self.eps = 147 * np.random.normal(1, self.noise)
+
+        # derived parameters
+        self.sigma_ET = self.sigma * 0.5 ** (1 / self.rho)
+        self.beta_LG = self.beta/2
+
+
+class velocity_AYS(AYS_Environment):
+    def __init__(self, **kwargs):
+        super(velocity_AYS, self).__init__(**kwargs)
+        self.velocity = np.zeros(3)
+
+    def reset(self):
+        """We change the reset such that every episode has ever so slightly different parameters"""
+        self.state = np.array(self.current_state_region_StartPoint())
+        self.final_state = False
+        self.t = self.t0
+        self.velocity = np.zeros(3)
+        return np.hstack((self.state, self.velocity))
+
+    def step(self, action: int) -> np.array:
+        """
+        This function performs one simulation step in a RFL algorithm.
+        It updates the state and returns a reward according to the chosen reward-function.
+        """
+
+        next_t = self.t + self.dt
+        self.state = self._perform_step(action, next_t)
+        self.t = next_t
+        if self._arrived_at_final_state():
+            self.final_state = True
+
+        reward = self.reward_function(action)
+        if not self._inside_planetary_boundaries():
+            self.final_state = True
+
+        if self.final_state:
+            reward += self.calculate_expected_final_reward()
+
+        state = self.get_velocity_state(action)
+        return state, reward, self.final_state, None
+
+    def get_velocity_state(self, action):
+        A, Y, S = self.state
+
+        sigma = [4e12, 4e12, 2.83e12, 2.83e12]
+        beta = [0.03, 0.015, 0.03, 0.015]
+        gamma = 1/(1+(S/sigma[action])**2)
+        U = Y/self.eps
+        R = (1-gamma)*U
+        E = (U-R)/self.phi
+
+        dA = E - A/self.tau_A
+        dY = beta[action]*Y - self.theta*A
+        dS = R - S/self.tau_S
+
+        v = self.velocity + np.array([dA, dY, dS])
+        return np.hstack((self.state, v))

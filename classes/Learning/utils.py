@@ -10,6 +10,7 @@ import matplotlib.patches as mpatches
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
 class ReplayBuffer:
     """To store experience for uncorrelated learning"""
 
@@ -45,12 +46,12 @@ def plot(data_dict):
     plt.plot(rewards)
     reward = np.array(rewards)
     stds = np.array(std)
-    plt.fill_between(np.arange(len(reward)), reward-0.25*stds, reward+0.25*stds, color='b', alpha=0.1)
-    plt.fill_between(np.arange(len(reward)), reward-0.5 * stds, reward+0.5 * stds, color='b', alpha=0.1)
+    plt.fill_between(np.arange(len(reward)), reward - 0.25 * stds, reward + 0.25 * stds, color='b', alpha=0.1)
+    plt.fill_between(np.arange(len(reward)), reward - 0.5 * stds, reward + 0.5 * stds, color='b', alpha=0.1)
     plt.show()
 
 
-def plot_test_trajectory(env, agent, max_steps=600, test_state=None):
+def plot_test_trajectory(env, agent, max_steps=600, test_state=None, fname=None):
     """To plot trajectories of the agent"""
     state = env.reset_for_state(test_state)
     learning_progress = []
@@ -58,7 +59,7 @@ def plot_test_trajectory(env, agent, max_steps=600, test_state=None):
         list_state = env.get_plot_state_list()
 
         # take recommended action
-        action = agent.get_action(state)
+        action = agent.get_action(state, testing=True)
 
         # Do the new chosen action in Environment
         new_state, reward, done, _ = env.step(action)
@@ -69,7 +70,7 @@ def plot_test_trajectory(env, agent, max_steps=600, test_state=None):
         if done:
             break
 
-    env.plot_run(learning_progress)
+    env.plot_run(learning_progress, fname=fname)
 
     return env.which_final_state()
 
@@ -78,6 +79,7 @@ class PER_IS_ReplayBuffer:
     """
     Adapted from https://github.com/labmlai/annotated_deep_learning_paper_implementations
     """
+
     def __init__(self, capacity, alpha, state_dim=3):
         self.capacity = capacity
         self.alpha = alpha
@@ -132,10 +134,10 @@ class PER_IS_ReplayBuffer:
     def find_prefix_sum_idx(self, prefix_sum):
         idx = 1
         while idx < self.capacity:
-            if self.priority_sum[idx*2] > prefix_sum:
+            if self.priority_sum[idx * 2] > prefix_sum:
                 idx = 2 * idx
             else:
-                prefix_sum -= self.priority_sum[idx*2]
+                prefix_sum -= self.priority_sum[idx * 2]
                 idx = 2 * idx + 1
 
         return idx - self.capacity
@@ -152,14 +154,14 @@ class PER_IS_ReplayBuffer:
             idx = self.find_prefix_sum_idx(p)
             samples['indexes'][i] = idx
 
-        prob_min = self._min()/self._sum()
-        max_weight = (prob_min*self.size)**(-beta)
+        prob_min = self._min() / self._sum()
+        max_weight = (prob_min * self.size) ** (-beta)
 
         for i in range(batch_size):
             idx = samples['indexes'][i]
-            prob = self.priority_sum[idx+self.capacity]/self._sum()
-            weight = (prob*self.size)**(-beta)
-            samples['weights'][i] = weight/max_weight
+            prob = self.priority_sum[idx + self.capacity] / self._sum()
+            weight = (prob * self.size) ** (-beta)
+            samples['weights'][i] = weight / max_weight
 
         for k, v in self.data.items():
             samples[k] = v[samples['indexes']]
@@ -192,19 +194,32 @@ def feature_importance(agent_net, buffer, n_points, v=False):
                                    torch.from_numpy(data).float().to(DEVICE))
     shap_q_values = explainer.shap_values(torch.from_numpy(data).float().to(DEVICE))
     shap_values = np.array(np.max(shap_q_values, axis=0))
-
-
     shap.summary_plot(shap_values, features=data, feature_names=features)
 
-def plot_matrix(results):
-    t = 1
+
+def plot_end_state_matrix(results):
+    t = 1 # alpha value
     size = int(np.sqrt(len(results)))
     cmap = {1: [0.6, 0.3, 0., t], 2: [0., 1.0, 0., t], 3: [1.0, 0.1, 0.1, t], 4: [1., 1., 0., t]}
-    labels = {1: 'Brown_FP', 2: 'Green_FP', 3: 'A_PB', 4: 'Y_PB'}
+    labels = {1: 'Black_FP', 2: 'Green_FP', 3: 'A_PB', 4: 'Y_SF'}
     arrayShow = np.array([[cmap[i] for i in j] for j in results.reshape(size, size)])
     patches = [mpatches.Patch(color=cmap[i], label=labels[i]) for i in cmap]
-    plt.imshow(arrayShow, extent=(0.45, 0.55, 0.45, 0.55))
-    plt.legend(handles=patches, borderaxespad=0.)
+    plt.imshow(arrayShow, extent=(0.45, 0.55, 0.55, 0.45))
+    plt.legend(handles=patches, loc='upper left', bbox_to_anchor=(1, 1.))
+    plt.ylabel("Y")
+    plt.xlabel("A")
+    plt.show()
+
+
+def plot_action_matrix(results):
+    t = 1 # alpha value
+    size = int(np.sqrt(len(results)))
+    cmap = {0: [1.0, 0.1, 0.1, t], 1: [1., 0.5, 0., t], 2: [0.1, 1., 0.1, t], 3: [0., 0., 1., t]}
+    labels = {0: 'Default', 1: 'DG', 2: 'ET', 3: 'DG+ET'}
+    arrayShow = np.array([[cmap[i] for i in j] for j in results.reshape(size, size)])
+    patches = [mpatches.Patch(color=cmap[i], label=labels[i]) for i in cmap]
+    plt.imshow(arrayShow, extent=(0.45, 0.55, 0.55, 0.45))
+    plt.legend(handles=patches, loc='upper left', bbox_to_anchor=(1, 1.))
     plt.ylabel("Y")
     plt.xlabel("A")
     plt.show()

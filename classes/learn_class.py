@@ -10,7 +10,7 @@ import random
 import numpy as np
 import torch
 import wandb
-
+import matplotlib.pyplot as plt
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -18,7 +18,8 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 class Learning:
     def __init__(self, wandb_save=False, verbose=False, reward_type="PB",
                  max_episodes=2000, max_steps=600, max_frames=1e5,
-                 max_epochs=50, seed=0, gamma=0.99):
+                 max_epochs=50, seed=0, gamma=0.99,
+                 save_locally=False):
 
         # environment
         self.env = AYS_Environment(reward_type=reward_type, discount=gamma)
@@ -40,6 +41,7 @@ class Learning:
         # saving in wandb or logging
         self.wandb_save = wandb_save
         self.verbose = verbose
+        self.save_locally = save_locally
 
         # run information in a dictionary
         self.data = {'rewards': [],
@@ -52,11 +54,10 @@ class Learning:
 
     def learning_loop_rollout(self, batch_size, buffer_size, notebook=False, plotting=False, config=None):
         """For PPO and A2C, these can't be updated fully offline"""
-
-        if str(self.agent) == "A2C":
-            assert self.max_epochs == 1, "A2C is on-policy, can't update for more than one epoch, " \
-                                         "max_epochs must be set to 1."
-            assert batch_size == buffer_size, "A2C is on-policy, can't update in mini-batches."
+        # if str(self.agent) == "A2C":
+        #     assert self.max_epochs == 1, "A2C is on-policy, can't update for more than one epoch, " \
+        #                                  "max_epochs must be set to 1."
+        #     assert batch_size == buffer_size, "A2C is on-policy, can't update in mini-batches."
 
         wandb.init(project="AYS_learning", entity="climate_policy_optim", config=config, job_type=str(self.agent)) \
             if self.wandb_save else None
@@ -88,19 +89,13 @@ class Learning:
                     # append data
                     self.append_data(episode_reward)
 
-                    print("Episode:", self.data['episodes'], "|| Reward:", round(episode_reward),
-                          "|| Final_state", self.env.which_final_state().name) if self.verbose else None
-
-                    wandb.log({'episode_reward': episode_reward,
-                               "moving_average": self.data['moving_avg_rewards'][-1]}) if self.wandb_save else None
-
                     episode_reward = 0
                     next_state = torch.Tensor(self.env.reset()).to(DEVICE)
 
                     # for notebook
                     if notebook and self.data['episodes'] % 10 == 0:
                         utils.plot(self.data)
-                        if self.data['episodes'] % 500 == 0:
+                        if plotting and self.data['episodes'] % 500 == 0:
                             utils.plot_test_trajectory(self.env, self.agent)
 
                 # get action and other stuff
@@ -108,7 +103,7 @@ class Learning:
                     action, log_prob, entropy, value = self.agent.get_action_and_value(next_state)
 
                 # step through environment
-                next_state, reward, done, _ = self.env.step(action)
+                next_state, reward, done, _ = self.env.step(action.cpu().numpy())
 
                 # append batch data
                 actions[i] = action
@@ -134,10 +129,13 @@ class Learning:
                 for start in range(0, buffer_size, batch_size):
                     end = start + batch_size
                     batch_idx = buffer_idx[start:end]
-                    self.agent.update((obs[batch_idx], actions[batch_idx], values[batch_idx],
-                                       rewards[batch_idx], dones[batch_idx],
-                                       logprobs[batch_idx],
-                                       advantages[batch_idx], returns[batch_idx]))
+                    pol_loss, val_loss = self.agent.update((obs[batch_idx], actions[batch_idx], values[batch_idx],
+                                                            rewards[batch_idx], dones[batch_idx],
+                                                            logprobs[batch_idx],
+                                                            advantages[batch_idx], returns[batch_idx]))
+                    wandb.log({"pol_loss": pol_loss, "val_loss": val_loss, "loss": val_loss + pol_loss}) \
+                        if self.wandb_save else None
+
             # scheduler steps only if we have learnt something
             # if self.data['moving_avg_rewards'][-1] > 150:
             self.agent.critic_scheduler.step()
@@ -151,6 +149,7 @@ class Learning:
         if self.wandb_save:
             wandb.run.summary["mean_reward"] = np.mean(self.data['rewards'])
             wandb.run.summary["top_reward"] = max(self.data['rewards'])
+            wandb.log(self.data)
             wandb.finish()
 
         # show final trajectory
@@ -158,14 +157,19 @@ class Learning:
             utils.plot(self.data)
             utils.plot_test_trajectory(self.env, self.agent)
 
+        if self.save_locally:
+            torch.save(self.agent.actor.state_dict(), "policy_net.pt")
+            torch.save(self.agent.critic.state_dict(), "value_net.pt")
+            np.save('run_data.npy', self.data)
+
     def learning_loop_offline(self, batch_size, buffer_size, per_is, notebook=False,
-                              plotting=False, alpha=0.4, beta=0.2, config=None):
+                              plotting=False, alpha=0.345, beta=0.236, config=None):
         """For DQN-based agents which can be updated offline which is more data efficient """
 
         wandb.init(project="AYS_learning", entity="climate_policy_optim", config=config, job_type=str(self.agent)) \
             if self.wandb_save else None
         # initiate memory
-        self.memory = utils.PER_IS_ReplayBuffer(buffer_size, alpha=alpha) if per_is else utils.ReplayBuffer(buffer_size)
+        self.memory = utils.PER_IS_ReplayBuffer(buffer_size, alpha=alpha, state_dim=self.state_dim) if per_is else utils.ReplayBuffer(buffer_size)
 
         for episodes in range(self.max_episodes):
 
@@ -185,21 +189,6 @@ class Learning:
                 episode_reward += reward
 
                 self.memory.push(state, action, reward, next_state, done)
-
-                # prepare for next iteration
-                state = next_state
-                self.data['frame_idx'] += 1
-
-                # if the episode is finished we stop there
-                if done:
-                    break
-
-            # bookkeeping
-            self.append_data(episode_reward)
-
-            # we loop through epochs
-            for epoch in range(self.max_epochs):
-                # once the buffer is large enough for a batch
                 if len(self.memory) > batch_size:
                     # if we are using prioritised experience replay buffer with importance sampling
                     if per_is:
@@ -217,14 +206,18 @@ class Learning:
                         loss, _ = self.agent.update(sample)
 
                     wandb.log({'loss': loss}) if self.wandb_save else None
+                # prepare for next iteration
+                state = next_state
+                self.data['frame_idx'] += 1
 
-            # we log or print depending on settings
-            wandb.log({'episode_reward': episode_reward,
-                       "moving_average": self.data['moving_avg_rewards'][-1]}) if self.wandb_save else None
+                # if the episode is finished we stop there
+                if done:
+                    break
 
-            print("Episode:", episodes, "|| Reward:", round(episode_reward), "|| Final State ",
-                  self.env.which_final_state().name) if self.verbose else None
+            # bookkeeping
+            self.append_data(episode_reward)
 
+            # self.agent.scheduler.step()
             # for notebook
             if notebook and episodes % 10 == 0:
                 utils.plot(self.data)
@@ -246,9 +239,16 @@ class Learning:
             utils.plot(self.data)
             utils.plot_test_trajectory(self.env, self.agent)
 
-    def set_agent(self, agent_str, **kwargs):
-        """Set the agent to the environment with specific parameters"""
+    def set_agent(self, agent_str, pt_file_path=None, second_path=None, **kwargs):
+        """Set the agent to the environment with specific parameters or weights"""
         self.agent = eval("ag." + agent_str)(self.state_dim, self.action_dim, gamma=self.gamma, **kwargs)
+        if pt_file_path is not None:
+            if agent_str == "PPO" or agent_str == "A2C":
+                self.agent.actor.load_state_dict(torch.load(pt_file_path))
+                self.agent.critic.load_state_dict(torch.load(second_path))
+            else:
+                self.agent.policy_net.load_state_dict(torch.load(pt_file_path))
+                self.agent.target_net.load_state_dict(torch.load(pt_file_path))
 
     def append_data(self, episode_reward):
         """We append the latest episode reward and calculate moving averages and moving standard deviations"""
@@ -259,139 +259,112 @@ class Learning:
         self.data['episodes'] += 1
         self.data['final_point'].append(self.env.which_final_state().name)
 
-    def test_agent(self, n_points=100, max_steps=10000, state_size=3):
-        """Test the agent on different initial conditions"""
+        # we log or print depending on settings
+        wandb.log({'episode_reward': episode_reward,
+                   "moving_average": self.data['moving_avg_rewards'][-1]}) \
+            if self.wandb_save else None
+
+        print("Episode:", self.data['episodes'], "|| Reward:", round(episode_reward), "|| Final State ",
+              self.env.which_final_state().name) \
+            if self.verbose else None
+
+    def test_agent(self, n_points=100, max_steps=10000, s_default=0.5) -> plt:
+        """Test the agent on different initial conditions to see if it can escape"""
         grid_size = int(np.sqrt(n_points))
         results = np.zeros((n_points, 1))
-        test_states = np.zeros((n_points, state_size))
+        test_states = np.zeros((n_points, self.state_dim))
 
         for a in range(grid_size):
             for y in range(grid_size):
-                test_states[a*grid_size + y] = np.array([0.45 + a * 1/(grid_size*10), 0.45 + y * 1/(grid_size*10), 0.5])
+                test_states[a * grid_size + y] = \
+                    np.array([0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default])
 
         for i in range(len(test_states)):
             state = self.env.reset_for_state(test_states[i])
             for steps in range(max_steps):
-                action = self.agent.get_action(state)
+                action = self.agent.get_action(state, testing=True)
                 next_state, reward, done, _ = self.env.step(action)
                 if done:
                     results[i] = int(self.env.which_final_state().value)
                     break
                 state = next_state
-        utils.plot_matrix(results)
+        utils.plot_end_state_matrix(results)
 
-    def feature_plots(self, samples):
+    def initialisation_values(self, n_points=100, s_default=0.5) -> plt:
+        """Create a plot of the state values at different initialisations"""
+        grid_size = int(np.sqrt(n_points))
+        test_states = np.zeros((n_points, self.state_dim))
+        for a in range(grid_size):
+            for y in range(grid_size):
+                test_states[a * grid_size + y] = \
+                    np.array([0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default])
+        if str(self.agent) == "A2C" or str(self.agent) == "PPO":
+            results = self.agent.critic(torch.from_numpy(test_states).float().to(DEVICE))
+        else:
+            results = torch.max((self.agent.target_net(torch.from_numpy(test_states).float().to(DEVICE))), dim=1)[0]
+
+        plt.imshow(results.view(grid_size, grid_size).detach().cpu(), extent=(0.45, 0.55, 0.55, 0.45))
+        plt.ylabel("Y")
+        plt.xlabel("A")
+        plt.colorbar()
+
+    def initialisation_actions(self, n_points=100, s_default=0.5) -> plt:
+        """Make a plot of the best action to do at initialisation"""
+        grid_size = int(np.sqrt(n_points))
+        test_states = np.zeros((n_points, self.state_dim))
+        for a in range(grid_size):
+            for y in range(grid_size):
+                test_states[a * grid_size + y] = \
+                    np.array([0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default])
+        if str(self.agent) == "A2C" or str(self.agent) == "PPO":
+            results = torch.argmax(self.agent.actor(torch.from_numpy(test_states).float().to(DEVICE)), dim=1)
+        else:
+            results = torch.argmax((self.agent.target_net(torch.from_numpy(test_states).float().to(DEVICE))), dim=1)
+        utils.plot_action_matrix(results.detach().cpu().numpy())
+
+    def feature_plots(self, samples) -> plt:
         """To make feature importance plots"""
         self.samples = utils.ReplayBuffer(samples)
         while len(self.samples) < samples:
             state = self.env.reset()
             done = False
             while not done:
-                action = self.agent.get_action(state)
+                action = self.agent.get_action(state, testing=True)
                 next_state, reward, done, _ = self.env.step(action)
                 self.samples.push(state, action, reward, next_state, done)
                 state = next_state
-        if str(self.agent)=="A2C" or str(self.agent)=="PPO":
+        if str(self.agent) == "A2C" or str(self.agent) == "PPO":
             agent_net = self.agent.actor
         else:
             agent_net = self.agent.target_net
         utils.feature_importance(agent_net, self.samples, samples)
 
-    def plot_trajectory(self, start_state, steps=600):
-        utils.plot_test_trajectory(self.env, self.agent, max_steps=steps, test_state=start_state)
-
-
-
-    # def learning_loop_online(self, agent_str, notebook=False, plotting=False):
-    #
-    #     wandb.init() if self.wandb_save else None
-    #     env = self.env
-    #
-    #     if agent_str == "DuelDQN" or agent_str == "DuelDDQN":
-    #         print("wrong agents, use Actor Critics: A2C or PPO")
-    #         return
-    #
-    #     agent = self.agent
-    #
-    #     rewards = []
-    #     mean_rewards = []
-    #     std_rewards = []
-    #     frame_idx = 0
-    #
-    #     for episodes in range(self.max_episodes):
-    #
-    #         # reset environment to a random state (0.5, 0.5, 0.5) * gaussian noise
-    #         state = env.reset()
-    #         episode_reward = 0
-    #         I = 1
-    #
-    #         for i in range(self.max_steps):
-    #
-    #             # get state
-    #             action = agent.get_action(state)
-    #
-    #             # step through environment
-    #             next_state, reward, done, = env.step(action)
-    #
-    #             # add reward
-    #             episode_reward += reward
-    #
-    #             # update the agent with last experience
-    #             loss = agent.online_update((state, action, reward, next_state, done), I)
-    #             I *= agent.gamma
-    #
-    #             wandb.log({'loss': loss}) if self.wandb_save else None
-    #
-    #             # prepare for next iteration
-    #             state = next_state
-    #             frame_idx += 1
-    #
-    #             # if the episode is finished we stop there
-    #             if done:
-    #                 break
-    #
-    #         # bookkeeping
-    #         rewards.append(episode_reward)
-    #         mean = np.mean(rewards[-50:])
-    #         std = np.std(rewards[-50:])
-    #         mean_rewards.append(mean)
-    #         std_rewards.append(std)
-    #
-    #         # we log or print depending on settings
-    #         wandb.log({'episode_reward': episode_reward, "moving_average": mean}) if self.wandb_save else None
-    #         print("Episode:", episodes, "|| Reward:", round(episode_reward),
-    #               "|| Final State ", env.which_final_state().name) if self.verbose else None
-    #
-    #         # for notebook
-    #         if notebook and episodes % 10 == 0:
-    #             utils.plot(frame_idx, mean_rewards, std_rewards)
-    #             if episodes % 500 == 0:
-    #                 utils.plot_test_trajectory(env, agent)
-    #
-    #         # if we spend a long time in the simulation
-    #         if frame_idx > self.max_frames:
-    #             break
-    #
-    #     # log and show final trajectory
-    #     if self.wandb_save:
-    #         wandb.run.summary["mean_reward"] = np.mean(rewards)
-    #         wandb.run.summary["top_reward"] = max(rewards)
-    #         wandb.finish()
-    #
-    #     if plotting:
-    #         utils.plot(frame_idx, mean_rewards, std_rewards)
-    #         utils.plot_test_trajectory(env, agent)
-    #     return rewards
-
+    def plot_trajectory(self, start_state=None, steps=600, fname=None) -> plt:
+        utils.plot_test_trajectory(self.env, self.agent, max_steps=steps, test_state=start_state, fname=fname)
 
 
 if __name__ == "__main__":
-    # experiment = Learning(max_frames=1e3, verbose=True, max_epochs=75, seed=0, reward_type='PB')
-    # experiment.set_agent("DuelDDQN")
-    # experiment.learning_loop_offline(64, 10000, per_is=True, plotting=False)
+    # experiment = Learning(max_frames=1e5, verbose=True, max_epochs=75, seed=0, reward_type='PB', gamma=0.96)
+    # experiment.set_agent("DQN", epsilon=1, rho=0.9,tau=0.01, lr=0.00025)
+    # experiment.learning_loop_offline(32, 100000, per_is=False, plotting=False)
     # experiment.test_agent(n_points=100)
     # experiment.feature_plots(100)
-    experiment = Learning(max_frames=1e6, verbose=True, max_epochs=1, seed=1, reward_type='PB', max_episodes=40000)
-    experiment.set_agent("A2C", epsilon=0.27, lamda=0.81, lr_critic=0.004, lr_actor=0.0013, max_grad_norm=100,
+    experiment = Learning(max_frames=5e5, verbose=True, max_epochs=1, seed=2, reward_type='PB', max_episodes=20000,
+                          save_locally=True)
+    experiment.set_agent("A2C", epsilon=0.002, lamda=0.81, lr_critic=0.004, lr_actor=0.0013, max_grad_norm=100,
                          actor_decay=1., critic_decay=1.)
-    experiment.learning_loop_rollout(128, 128, plotting=True)
+    experiment.learning_loop_rollout(128, 128, plotting=False)
+    # experiment.feature_plots(10)
+    # import gym
+    # exp = Learning(max_epochs=1)
+    # exp.env = gym.make("CartPole-v1")
+    # exp.action_dim = 2
+    # exp.state_dim = 4
+    # exp.set_agent("A2C", actor_decay=1, critic_decay=1)
+    # exp.env = gym.make("CartPole-v1")
+    # exp.learning_loop_rollout(64, 64)
+    # experiment = Learning(max_frames=5e5, gamma=0.894, verbose=True, max_epochs=1, seed=0, reward_type='PB', max_episodes=20000,
+    #                       save_locally=False)
+    # experiment.set_agent("A2C", epsilon=0.0241, lamda=0.161, lr_critic=0.005984, lr_actor=0.00988946, max_grad_norm=1000,
+    #                      actor_decay=0.9968, critic_decay=0.99755)
+    # experiment.learning_loop_rollout(128, 128, plotting=True)
