@@ -103,7 +103,7 @@ class AYS_Environment(Env):
     possible_test_cases = [[0.4949063922255394, 0.4859623171738628, 0.5], [0.42610779, 0.52056811, 0.5]]
 
     def __init__(self, discount=0.99, t0=0, dt=1, reward_type='PB', max_steps=600, image_dir='./images/', run_number=0,
-                 plot_progress=False):
+                 plot_progress=False, **kwargs):
         self.management_cost = -0.001
         self.image_dir = image_dir
         self.run_number = run_number
@@ -167,7 +167,7 @@ class AYS_Environment(Env):
         if not self._inside_planetary_boundaries():
             self.final_state = True
 
-        if self.final_state:
+        if self.final_state and self.reward_type=="PB":
             reward += self.calculate_expected_final_reward()
 
         return self.state, reward, self.final_state, None
@@ -726,10 +726,11 @@ class velocity_AYS(AYS_Environment):
     def reset(self):
         """We change the reset such that every episode has ever so slightly different parameters"""
         self.state = np.array(self.current_state_region_StartPoint())
+        self.velocity = np.zeros(3)
         self.final_state = False
         self.t = self.t0
-        self.velocity = np.zeros(3)
-        return np.hstack((self.state, self.velocity))
+        velocity_state = self.get_velocity_state(0)
+        return velocity_state
 
     def step(self, action: int) -> np.array:
         """
@@ -747,11 +748,11 @@ class velocity_AYS(AYS_Environment):
         if not self._inside_planetary_boundaries():
             self.final_state = True
 
-        if self.final_state:
+        if self.final_state and self.reward_type=="PB":
             reward += self.calculate_expected_final_reward()
 
-        state = self.get_velocity_state(action)
-        return state, reward, self.final_state, None
+        velocity_state = self.get_velocity_state(action)
+        return velocity_state, reward, self.final_state, None
 
     def get_velocity_state(self, action):
         A, Y, S = self.state
@@ -767,5 +768,5 @@ class velocity_AYS(AYS_Environment):
         dY = beta[action]*Y - self.theta*A
         dS = R - S/self.tau_S
 
-        v = self.velocity + np.array([dA, dY, dS])
-        return np.hstack((self.state, v))
+        self.velocity += np.array([dA, dY, dS])
+        return np.hstack((self.state, self.velocity))

@@ -42,6 +42,7 @@ class Learning:
         self.wandb_save = wandb_save
         self.verbose = verbose
         self.save_locally = save_locally
+        self.group_name = reward_type
 
         # run information in a dictionary
         self.data = {'rewards': [],
@@ -59,7 +60,8 @@ class Learning:
         #                                  "max_epochs must be set to 1."
         #     assert batch_size == buffer_size, "A2C is on-policy, can't update in mini-batches."
 
-        wandb.init(project="AYS_learning", entity="climate_policy_optim", config=config, job_type=str(self.agent)) \
+        wandb.init(project="AYS_learning", entity="climate_policy_optim", config=config, job_type=str(self.agent),
+                   group=self.group_name) \
             if self.wandb_save else None
 
         # initialise recursive variables
@@ -144,12 +146,14 @@ class Learning:
             # if we spend a long time in the simulation
             if self.data['frame_idx'] > self.max_frames or self.data['episodes'] > self.max_episodes:
                 break
-
+        success_rate = self.data["final_point"].count("GREEN_FP")/self.data["episodes"]
+        print(success_rate)
         # log data
         if self.wandb_save:
             wandb.run.summary["mean_reward"] = np.mean(self.data['rewards'])
             wandb.run.summary["top_reward"] = max(self.data['rewards'])
-            wandb.log(self.data)
+            wandb.run.summary["success_rate"] = success_rate
+            wandb.run.summary["data"] = self.data
             wandb.finish()
 
         # show final trajectory
@@ -166,7 +170,8 @@ class Learning:
                               plotting=False, alpha=0.345, beta=0.236, config=None):
         """For DQN-based agents which can be updated offline which is more data efficient """
 
-        wandb.init(project="AYS_learning", entity="climate_policy_optim", config=config, job_type=str(self.agent)) \
+        wandb.init(project="AYS_learning", entity="climate_policy_optim", config=config, job_type=str(self.agent),
+                   group=self.group_name) \
             if self.wandb_save else None
         # initiate memory
         self.memory = utils.PER_IS_ReplayBuffer(buffer_size, alpha=alpha, state_dim=self.state_dim) if per_is else utils.ReplayBuffer(buffer_size)
@@ -227,12 +232,14 @@ class Learning:
             # if we spend too long in the simulation
             if self.data['frame_idx'] > self.max_frames:
                 break
-
+        success_rate = self.data["final_point"].count("GREEN_FP") / self.data["episodes"]
+        print(success_rate)
         # log and show final trajectory
         if self.wandb_save:
             wandb.run.summary["mean_reward"] = np.mean(self.data['rewards'])
             wandb.run.summary["top_reward"] = max(self.data['rewards'])
-            wandb.log(self.data)
+            wandb.run.summary["success_rate"] = success_rate
+            wandb.run.summary["data"] = self.data
             wandb.finish()
 
         if plotting:
@@ -322,7 +329,7 @@ class Learning:
             results = torch.argmax((self.agent.target_net(torch.from_numpy(test_states).float().to(DEVICE))), dim=1)
         utils.plot_action_matrix(results.detach().cpu().numpy())
 
-    def feature_plots(self, samples) -> plt:
+    def feature_plots(self, samples, v=False) -> plt:
         """To make feature importance plots"""
         self.samples = utils.ReplayBuffer(samples)
         while len(self.samples) < samples:
@@ -337,34 +344,28 @@ class Learning:
             agent_net = self.agent.actor
         else:
             agent_net = self.agent.target_net
-        utils.feature_importance(agent_net, self.samples, samples)
+        utils.feature_importance(agent_net, self.samples, samples, v)
 
     def plot_trajectory(self, start_state=None, steps=600, fname=None) -> plt:
         utils.plot_test_trajectory(self.env, self.agent, max_steps=steps, test_state=start_state, fname=fname)
 
 
 if __name__ == "__main__":
-    # experiment = Learning(max_frames=1e5, verbose=True, max_epochs=75, seed=0, reward_type='PB', gamma=0.96)
-    # experiment.set_agent("DQN", epsilon=1, rho=0.9,tau=0.01, lr=0.00025)
-    # experiment.learning_loop_offline(32, 100000, per_is=False, plotting=False)
-    # experiment.test_agent(n_points=100)
-    # experiment.feature_plots(100)
-    experiment = Learning(max_frames=5e5, verbose=True, max_epochs=1, seed=2, reward_type='PB', max_episodes=20000,
-                          save_locally=True)
-    experiment.set_agent("A2C", epsilon=0.002, lamda=0.81, lr_critic=0.004, lr_actor=0.0013, max_grad_norm=100,
-                         actor_decay=1., critic_decay=1.)
-    experiment.learning_loop_rollout(128, 128, plotting=False)
-    # experiment.feature_plots(10)
-    # import gym
-    # exp = Learning(max_epochs=1)
-    # exp.env = gym.make("CartPole-v1")
-    # exp.action_dim = 2
-    # exp.state_dim = 4
-    # exp.set_agent("A2C", actor_decay=1, critic_decay=1)
-    # exp.env = gym.make("CartPole-v1")
-    # exp.learning_loop_rollout(64, 64)
+    a=1
+    # experiment = Learning(max_frames=5e5, verbose=True, max_epochs=1, seed=2, reward_type='PB', max_episodes=20000,
+    #                       save_locally=True)
+    # experiment.set_agent("A2C", epsilon=0.002, lamda=0.81, lr_critic=0.004, lr_actor=0.0013, max_grad_norm=100,
+    #                      actor_decay=1., critic_decay=1.)
+    # experiment.learning_loop_rollout(128, 128, plotting=False)
+
     # experiment = Learning(max_frames=5e5, gamma=0.894, verbose=True, max_epochs=1, seed=0, reward_type='PB', max_episodes=20000,
     #                       save_locally=False)
     # experiment.set_agent("A2C", epsilon=0.0241, lamda=0.161, lr_critic=0.005984, lr_actor=0.00988946, max_grad_norm=1000,
     #                      actor_decay=0.9968, critic_decay=0.99755)
     # experiment.learning_loop_rollout(128, 128, plotting=True)
+    experiment = Learning(max_frames=5e5, gamma=0.99, verbose=True, max_epochs=1, seed=1, reward_type='PB',
+                          max_episodes=20000,
+                          save_locally=False)
+    experiment.set_agent("A2C", epsilon=0.2758, lamda=0.99, lr_critic=0.0003, lr_actor=0.0003, max_grad_norm=1000,
+                         actor_decay=1.0, critic_decay=1.0)
+    experiment.learning_loop_rollout(64, 64, plotting=True)

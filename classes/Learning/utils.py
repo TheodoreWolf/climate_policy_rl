@@ -200,7 +200,7 @@ def feature_importance(agent_net, buffer, n_points, v=False):
 def plot_end_state_matrix(results):
     t = 1 # alpha value
     size = int(np.sqrt(len(results)))
-    cmap = {1: [0.6, 0.3, 0., t], 2: [0., 1.0, 0., t], 3: [1.0, 0.1, 0.1, t], 4: [1., 1., 0., t]}
+    cmap = {1: [0., 0., 0., t], 2: [0., 1.0, 0., t], 3: [1.0, 0.1, 0.1, t], 4: [1., 1., 0., t]}
     labels = {1: 'Black_FP', 2: 'Green_FP', 3: 'A_PB', 4: 'Y_SF'}
     arrayShow = np.array([[cmap[i] for i in j] for j in results.reshape(size, size)])
     patches = [mpatches.Patch(color=cmap[i], label=labels[i]) for i in cmap]

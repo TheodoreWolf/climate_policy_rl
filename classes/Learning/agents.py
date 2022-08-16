@@ -130,7 +130,7 @@ class DuelDDQN(DQN):
     """Implementation of DuelDDQN, inspired by RAINBOW"""
 
     def __init__(self, state_dim, action_dim, **kwargs):
-        super(DuelDDQN, self).__init__(state_dim, action_dim, lr=0.0076, epsilon=0.87, rho=0.76, tau=0.1, **kwargs)
+        super(DuelDDQN, self).__init__(state_dim, action_dim, lr=0.0076, epsilon=0.87, rho=0.76, tau=0.55, **kwargs)
         # create duelling networks that output Q-values, both target and policy are identical
         self.target_net = self.create_net(state_dim, action_dim, duelling=True).to(DEVICE)
         self.policy_net = self.create_net(state_dim, action_dim, duelling=True).to(DEVICE)
