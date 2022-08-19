@@ -132,8 +132,8 @@ class DQN:
 class DuelDDQN(DQN):
     """Implementation of DuelDDQN, inspired by RAINBOW"""
 
-    def __init__(self, state_dim, action_dim, **kwargs):
-        super(DuelDDQN, self).__init__(state_dim, action_dim, lr=0.00765, rho=0.76, tau=0.55, **kwargs)
+    def __init__(self, state_dim, action_dim, lr=0.00765, rho=0.76, tau=0.55, **kwargs):
+        super(DuelDDQN, self).__init__(state_dim, action_dim, lr=lr, rho=rho, tau=tau, **kwargs)
         # create duelling networks that output Q-values, both target and policy are identical
         self.target_net = self.create_net(state_dim, action_dim, duelling=True).to(DEVICE)
         self.policy_net = self.create_net(state_dim, action_dim, duelling=True).to(DEVICE)
@@ -266,11 +266,11 @@ class A2C:
 
 
 class PPO(A2C):
-    def __init__(self, *args, clip=0.26, **kwargs):
-        super(PPO, self).__init__(*args, lr_actor=0.000713, lr_critic=0.00953, epsilon=0.0213, lamda=0.81,
-                                   max_grad_norm=100, **kwargs)
+    def __init__(self, *args, clip=0.26, lr_actor=0.000713, lr_critic=0.00953, epsilon=0.0213, lamda=0.81,
+                 max_grad_norm=100, **kwargs):
+        super(PPO, self).__init__(*args, lr_actor=lr_actor, lr_critic=lr_critic, epsilon=epsilon, lamda=lamda,
+                                  max_grad_norm=max_grad_norm, **kwargs)
         self.clip = clip
-        # create networks and optimizers
 
         self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=self.lr_actor, eps=1e-5)
         self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=self.lr_critic, eps=1e-5)

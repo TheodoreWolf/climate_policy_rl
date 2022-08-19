@@ -385,5 +385,5 @@ if __name__ == "__main__":
     #                      actor_decay=0.9968, critic_decay=0.99755)
     # experiment.learning_loop_rollout(128, 128, plotting=True)
     experiment = Learn(verbose=True)
-    experiment.set_agent("DuelDDQN")
+    experiment.set_agent("DuelDDQN", lr=0.071)
     experiment.learning_loop_offline(128, 8192, per_is=True)
