@@ -20,8 +20,8 @@ def numpy_to_cuda(numpy_array):
 class DQN:
     """DQN implementation with epsilon greedy actions selection"""
 
-    def __init__(self, state_dim, action_dim, gamma=0.99, lr=0.0026, tau=0.1, rho=0.60, epsilon=0.25, polyak=False,
-                 decay=0.999):
+    def __init__(self, state_dim, action_dim, gamma=0.99, lr=0.00263, tau=0.11, rho=0.60, epsilon=1., polyak=False,
+                 decay=0.5, step_decay=50000):
 
         # create simple networks that output Q-values, both target and policy are identical
         self.target_net = self.create_net(state_dim, action_dim, duelling=False).to(DEVICE)
@@ -30,8 +30,9 @@ class DQN:
         # We use the Adam optimizer
         self.lr = lr
         self.decay = decay
+        self.step_decay = step_decay
         self.optimizer = torch.optim.Adam(self.policy_net.parameters(), lr=self.lr)
-        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=self.decay)
+        self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, gamma=self.decay, step_size=step_decay)
         self.action_size = action_dim
         self.gamma = gamma
 
@@ -46,7 +47,7 @@ class DQN:
         # We decay epsilon according to the following formula
         self.t = 1
         self.rho = rho
-        self.epsilon = lambda t: epsilon * 1 / (t ** self.rho)
+        self.epsilon = lambda t: 0.01 + epsilon / (t ** self.rho)
 
     @staticmethod
     def create_net(s_dim, a_dim, duelling):
@@ -106,7 +107,9 @@ class DQN:
         # we return the loss for logging and the TDs for Prioritised Experience Replay
         return loss, (state_qs - targets).detach()
 
+    @torch.no_grad()
     def next_state_value_estimation(self, next_states, done):
+        """Function to define the value of the next state, makes inheritance cleaner"""
         next_state_values = self.target_net(next_states).max(1)[0].detach()
         # the value of a state after a terminal state is 0
         next_state_values[done] = 0
@@ -130,22 +133,23 @@ class DuelDDQN(DQN):
     """Implementation of DuelDDQN, inspired by RAINBOW"""
 
     def __init__(self, state_dim, action_dim, **kwargs):
-        super(DuelDDQN, self).__init__(state_dim, action_dim, lr=0.0076, epsilon=0.87, rho=0.76, tau=0.55, **kwargs)
+        super(DuelDDQN, self).__init__(state_dim, action_dim, lr=0.00765, rho=0.76, tau=0.55, **kwargs)
         # create duelling networks that output Q-values, both target and policy are identical
         self.target_net = self.create_net(state_dim, action_dim, duelling=True).to(DEVICE)
         self.policy_net = self.create_net(state_dim, action_dim, duelling=True).to(DEVICE)
         self.optimizer = torch.optim.Adam(self.policy_net.parameters(), lr=self.lr)
-        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=self.decay)
+        self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, gamma=self.decay, step_size=self.step_decay)
 
+    @torch.no_grad()
     def next_state_value_estimation(self, next_states, done):
-        # next state value estimation is different for DDQN
-        with torch.no_grad():
-            # find max action with policy net
-            max_actions = self.policy_net(next_states).argmax(1).unsqueeze(1)
-            # estimate value of best action with target net
-            next_state_values = self.target_net(next_states).gather(1, max_actions)
-            next_state_values[done] = 0
-            return next_state_values
+        """next state value estimation is different for DDQN,
+        decouples action selection and evaluation for reduced estimation bias"""
+        # find max valued action with policy net
+        max_actions = self.policy_net(next_states).argmax(1).unsqueeze(1)
+        # estimate value of best action with target net
+        next_state_values = self.target_net(next_states).gather(1, max_actions)
+        next_state_values[done] = 0
+        return next_state_values
 
     def __str__(self):
         return "DuelDDQN"
@@ -154,18 +158,25 @@ class DuelDDQN(DQN):
 class A2C:
     """Implementation of the Advantage Actor Critic with entropy regularisation"""
 
-    def __init__(self, state_dim, action_dim, gamma=0.99, epsilon=0.002, lamda=0.81,
-                 lr_actor=0.004, lr_critic=0.0013,
-                 actor_decay=1., critic_decay=1.,
+    def __init__(self, state_dim, action_dim, gamma=0.99, epsilon=0.0241, lamda=0.161,
+                 lr_actor=0.00989, lr_critic=0.00598, step_decay=50000, decay=0.5,
                  max_grad_norm=100):
+
+        self.lr_actor = lr_actor
+        self.lr_critic = lr_critic
+        self.step_decay = step_decay
+        self.decay = decay
+
         # create networks and optimizers
         self.actor, self.critic = self.create_net(state_dim, action_dim)
-        self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=lr_actor, eps=1e-5)
-        self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=lr_critic, eps=1e-5)
+        self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=lr_actor)
+        self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=lr_critic)
 
         # create schedulers
-        self.actor_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.actor_optim, gamma=actor_decay)
-        self.critic_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.critic_optim, gamma=critic_decay)
+        self.actor_scheduler = torch.optim.lr_scheduler.StepLR(self.actor_optim, gamma=self.decay,
+                                                               step_size=step_decay)
+        self.critic_scheduler = torch.optim.lr_scheduler.StepLR(self.critic_optim, gamma=self.decay,
+                                                                step_size=step_decay)
 
         self.action_size = action_dim
         self.gamma = gamma
@@ -256,9 +267,19 @@ class A2C:
 
 class PPO(A2C):
     def __init__(self, *args, clip=0.26, **kwargs):
-        super(PPO, self).__init__(*args, lr_actor=0.0007, lr_critic=0.009, epsilon=0.2, lamda=0.81,
-                                  critic_decay=0.9, actor_decay=0.9, max_grad_norm=100, **kwargs)
+        super(PPO, self).__init__(*args, lr_actor=0.000713, lr_critic=0.00953, epsilon=0.0213, lamda=0.81,
+                                   max_grad_norm=100, **kwargs)
         self.clip = clip
+        # create networks and optimizers
+
+        self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=self.lr_actor, eps=1e-5)
+        self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=self.lr_critic, eps=1e-5)
+
+        # create schedulers
+        self.actor_scheduler = torch.optim.lr_scheduler.StepLR(self.actor_optim, gamma=self.decay,
+                                                               step_size=self.step_decay)
+        self.critic_scheduler = torch.optim.lr_scheduler.StepLR(self.critic_optim, gamma=self.decay,
+                                                                step_size=self.step_decay)
 
     def policy_loss(self, advantages, new_log_probs, log_probs, entropies):
         # normalisation of advantages at the mini-batch level
@@ -272,202 +293,3 @@ class PPO(A2C):
 
     def __str__(self):
         return "PPO"
-
-# class A2C2:
-#     def __init__(self, state_dim, action_dim, gamma=0.99, lr=0.001, epsilon=0.01):
-#         self.lr = lr
-#         self.epsilon = epsilon
-#         self.ac_net = nets.DualACNET(state_dim, action_dim).to(DEVICE)
-#         self.optimizer = torch.optim.Adam(self.ac_net.parameters(), lr=self.lr)
-#         self.action_size = action_dim
-#         self.gamma = gamma
-#         self.mse_loss = nn.MSELoss()
-#
-#     @staticmethod
-#     def create_net(s_dim, a_dim):
-#         pnet = nets.PolicyNet(s_dim, a_dim).to(DEVICE)
-#         vnet = nets.Net(s_dim, action_dim=1).to(DEVICE)
-#
-#         return pnet, vnet
-#
-#     @torch.no_grad()
-#     def get_action(self, state):
-#         """Softmax Policy"""
-#         preferences = self.ac_net(numpy_to_cuda(state))[1]
-#         action_dist = Categorical(preferences)
-#         action = action_dist.sample()
-#         return action.item()
-#
-#     def online_update(self, time_step, I):
-#         state, action, reward, next_state, done = time_step
-#
-#         state_t = numpy_to_cuda(state)
-#         next_state_t = numpy_to_cuda(next_state)
-#
-#         state_vs = self.ac_net(state_t)[0]
-#         next_state_values = self.ac_net(next_state_t)[0].detach()
-#
-#         next_state_values[done] = 0
-#
-#         td_target = reward + self.gamma * next_state_values
-#         advantage = td_target - state_vs
-#
-#         policy = self.ac_net(state_t)[1]
-#         policy_dist = torch.distributions.Categorical(policy)
-#         log_prob = policy_dist.log_prob(torch.tensor([action]).to(DEVICE))
-#
-#         policy_loss = I * -self.policy_loss(advantage, log_prob, policy)
-#         value_loss = self.mse_loss(state_vs, td_target)
-#         loss = policy_loss + value_loss
-#
-#         self.optimizer.zero_grad()
-#         loss.backward()
-#         self.optimizer.step()
-#         return loss
-#
-#     def policy_loss(self, advantage, log_prob, policy, weights=None):
-#         if weights is not None:
-#             return (advantage.detach() * log_prob * weights).mean() - self.epsilon * Categorical(
-#                 policy).entropy().mean()
-#         else:
-#             return (advantage.detach() * log_prob).mean() - self.epsilon * Categorical(policy).entropy().mean()
-
-
-# class PPO(A2C):
-#     def __init__(self, state_dim, action_dim, **kwargs):
-#         super(PPO, self).__init__(state_dim, action_dim, **kwargs)
-#
-#     def policy_loss(self, advantage, log_prob, _, weights=None):
-#         ratio = (log_prob - log_prob.detach()).exp()
-#         clipped_ratio = ratio.clamp(min=1. - self.epsilon, max=1. + self.epsilon)
-#         loss = torch.min(ratio * advantage, clipped_ratio * advantage)
-#         if weights is not None:
-#             return (loss * weights).mean()
-#         else:
-#             return loss.mean()
-#
-#
-# class A2Csplit(A2C):
-#     def __init__(self, state_dim, action_dim, critic_gamma=0.9, actor_gamma=0.9, tau=1000, lr_critic=3e-4, **kwargs):
-#         super().__init__(state_dim, action_dim, **kwargs)
-#         self.t = 0
-#         self.tau = tau
-#         self.actor, self.critic = self.create_net(state_dim, action_dim)
-#         self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=self.lr)
-#         self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=lr_critic)
-#         self.actor_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.actor_optim, gamma=actor_gamma)
-#         self.critic_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.critic_optim, gamma=critic_gamma)
-#
-#     @torch.no_grad()
-#     def get_action(self, state):
-#         """Softmax Policy"""
-#         preferences = self.actor(numpy_to_cuda(state))
-#         action_dist = Categorical(preferences)
-#         action = action_dist.sample()
-#         return action.item()
-#
-#     def online_update(self, time_step, I):
-#         state, action, reward, next_state, done = time_step
-#
-#         state_t = numpy_to_cuda(state)
-#         next_state_t = numpy_to_cuda(next_state)
-#
-#         state_vs = self.critic(state_t)
-#         next_state_values = self.critic(next_state_t).detach()
-#
-#         next_state_values[done] = 0
-#
-#         td_target = reward + self.gamma * next_state_values
-#         advantage = td_target - state_vs
-#
-#         policy = self.actor(state_t)
-#         policy_dist = torch.distributions.Categorical(policy)
-#         log_prob = policy_dist.log_prob(torch.tensor([action]).to(DEVICE))
-#
-#         policy_loss = I * -self.policy_loss(advantage, log_prob, policy)
-#         value_loss = self.mse_loss(state_vs, td_target)
-#
-#         self.actor_optim.zero_grad()
-#         policy_loss.backward()
-#         self.actor_optim.step()
-#
-#         self.critic_optim.zero_grad()
-#         value_loss.backward()
-#         self.critic_optim.step()
-#
-#         self.t += 1
-#         if self.t >= self.tau:
-#             self.critic_scheduler.step()
-#             self.actor_scheduler.step()
-#         return policy_loss + value_loss
-
-
-# class PPOsplit(A2C2):
-#     def __init__(self, state_dim, action_dim, clip=0.2, critic_gamma=0.9, actor_gamma=0.9,
-#                  max_grad_norm=20, lr_critic=3e-4, critic_param=1.5, lamda=0.95, **kwargs):
-#         super(PPOsplit, self).__init__(state_dim, action_dim, **kwargs)
-#         self.t = 0
-#         self.lamda = lamda
-#         self.clip = clip
-#         self.actor, self.critic = self.create_net(state_dim, action_dim)
-#         self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=self.lr, eps=1e-5)
-#         self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=lr_critic, eps=1e-5)
-#         self.actor_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.actor_optim, gamma=actor_gamma)
-#         self.critic_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.critic_optim, gamma=critic_gamma)
-#         self.max_grad_norm = max_grad_norm
-#         self.critic_param = critic_param
-#
-#     def get_action_and_value(self, state, action=None):
-#         preferences = self.actor(state)
-#         probs = Categorical(logits=preferences)
-#         if action is None:
-#             action = probs.sample()
-#         return action, probs.log_prob(action), probs.entropy(), self.critic(state)
-#
-#     def update(self, batch_sample):
-#         # we receive a minibatch of stuff
-#         states, actions, values, rewards, dones, logprobs, advantages, returns = batch_sample  # torch cuda tensors
-#
-#         _, new_log_probs, entropies, new_values = self.get_action_and_value(states, actions.long())
-#
-#         log_ratio = new_log_probs - logprobs
-#         ratio = log_ratio.exp()
-#         clipped_ratio = ratio.clamp(min=1. - self.clip, max=1. + self.clip)
-#         advantages = ((advantages - advantages.mean()) / (advantages.std() + 1e-8)).detach()
-#
-#         value_loss = self.mse_loss(new_values.squeeze(1), returns.detach()) * self.critic_param
-#         policy_loss = torch.max(-ratio * advantages,
-#                                 -clipped_ratio * advantages).mean() - self.epsilon * entropies.mean()
-#
-#         self.critic_optim.zero_grad()
-#         value_loss.backward()
-#         nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
-#         self.critic_optim.step()
-#
-#         self.actor_optim.zero_grad()
-#         policy_loss.backward()
-#         nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
-#         self.actor_optim.step()
-#
-#     def ppo_loss(self, advantage, log_prob, ):
-#         ratio = (log_prob - log_prob.detach()).exp()
-#         clipped_ratio = ratio.clamp(min=1. - self.epsilon, max=1. + self.epsilon)
-#         loss = torch.min(ratio * advantage, clipped_ratio * advantage)
-#         return loss.mean()
-#
-#     def compute_gae(self, values, dones, rewards, next_value, next_done):
-#         """Compute the Generalised advantages at each time step (called by the experiment class)"""
-#         last_adv = 0
-#         buffer_size = len(rewards)
-#         advantages = torch.zeros_like(rewards).to(DEVICE)
-#         for t in reversed(range(buffer_size)):
-#             if t == buffer_size - 1:
-#                 nextnonterminal = 1.0 - next_done
-#                 nextvalues = next_value
-#             else:
-#                 nextnonterminal = 1.0 - dones[t + 1]
-#                 nextvalues = values[t + 1]
-#             delta = rewards[t] + self.gamma * nextvalues * nextnonterminal - values[t]
-#             advantages[t] = last_adv = delta + self.gamma * self.lamda * nextnonterminal * last_adv
-#         returns = advantages + values
-#         return returns, advantages

@@ -18,7 +18,7 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 class Learn:
     def __init__(self, wandb_save=False, verbose=False, reward_type="PB",
                  max_episodes=2000, max_steps=600, max_frames=1e5,
-                 max_epochs=50, seed=0, gamma=0.99,
+                 max_epochs=50, seed=0, gamma=0.99, decay_number=0,
                  save_locally=False):
 
         # environment
@@ -38,6 +38,9 @@ class Learn:
         self.max_frames = max_frames
         self.max_epochs = max_epochs
 
+        # the number of times the learning rate is decayed
+        self.decay_number = decay_number
+
         # saving in wandb or logging
         self.wandb_save = wandb_save
         self.verbose = verbose
@@ -55,10 +58,8 @@ class Learn:
 
     def learning_loop_rollout(self, batch_size, buffer_size, notebook=False, plotting=False, config=None):
         """For PPO and A2C, these can't be updated fully offline"""
-        # if str(self.agent) == "A2C":
-        #     assert self.max_epochs == 1, "A2C is on-policy, can't update for more than one epoch, " \
-        #                                  "max_epochs must be set to 1."
-        #     assert batch_size == buffer_size, "A2C is on-policy, can't update in mini-batches."
+
+        self.data['frame_idx'] = self.data['episodes'] = 0
 
         wandb.init(project="AYS_learning", entity="climate_policy_optim", config=config, job_type=str(self.agent),
                    group=self.group_name) \
@@ -138,8 +139,7 @@ class Learn:
                     wandb.log({"pol_loss": pol_loss, "val_loss": val_loss, "loss": val_loss + pol_loss}) \
                         if self.wandb_save else None
 
-            # scheduler steps only if we have learnt something
-            # if self.data['moving_avg_rewards'][-1] > 150:
+            # scheduler steps
             self.agent.critic_scheduler.step()
             self.agent.actor_scheduler.step()
 
@@ -147,7 +147,7 @@ class Learn:
             if self.data['frame_idx'] > self.max_frames or self.data['episodes'] > self.max_episodes:
                 break
         success_rate = self.data["final_point"].count("GREEN_FP")/self.data["episodes"]
-        print(success_rate)
+        print("Success rate: ", round(success_rate, 3))
         # log data
         if self.wandb_save:
             wandb.run.summary["mean_reward"] = np.mean(self.data['rewards'])
@@ -169,6 +169,8 @@ class Learn:
     def learning_loop_offline(self, batch_size, buffer_size, per_is, notebook=False,
                               plotting=False, alpha=0.345, beta=0.236, config=None):
         """For DQN-based agents which can be updated offline which is more data efficient """
+
+        self.data['frame_idx'] = self.data['episodes'] = 0
 
         wandb.init(project="AYS_learning", entity="climate_policy_optim", config=config, job_type=str(self.agent),
                    group=self.group_name) \
@@ -197,7 +199,7 @@ class Learn:
                 if len(self.memory) > batch_size:
                     # if we are using prioritised experience replay buffer with importance sampling
                     if per_is:
-                        beta = 1 - (1 - beta) * np.exp(-0.005 * episodes)  # we converge beta to 1
+                        beta = 1 - (1 - beta) * np.exp(-0.05 * episodes)  # we converge beta to 1
                         sample = self.memory.sample(batch_size, beta)
                         loss, tds = self.agent.update(
                             (sample['obs'], sample['action'], sample['reward'], sample['next_obs'], sample['done']),
@@ -219,10 +221,13 @@ class Learn:
                 if done:
                     break
 
+            # causes warning messages if we call the scheduler before updating
+            if len(self.memory) > batch_size:
+                self.agent.scheduler.step()
             # bookkeeping
             self.append_data(episode_reward)
-
-            # self.agent.scheduler.step()
+            if self.data["frame_idx"] > 150:
+                self.agent.scheduler.step()
             # for notebook
             if notebook and episodes % 10 == 0:
                 utils.plot(self.data)
@@ -233,7 +238,7 @@ class Learn:
             if self.data['frame_idx'] > self.max_frames:
                 break
         success_rate = self.data["final_point"].count("GREEN_FP") / self.data["episodes"]
-        print(success_rate)
+        print("Success rate: ", round(success_rate, 3))
         # log and show final trajectory
         if self.wandb_save:
             wandb.run.summary["mean_reward"] = np.mean(self.data['rewards'])
@@ -248,7 +253,10 @@ class Learn:
 
     def set_agent(self, agent_str, pt_file_path=None, second_path=None, **kwargs):
         """Set the agent to the environment with specific parameters or weights"""
-        self.agent = eval("ag." + agent_str)(self.state_dim, self.action_dim, gamma=self.gamma, **kwargs)
+
+        step_decay = int(self.max_frames/(self.decay_number+1))
+        self.agent = eval("ag." + agent_str)(self.state_dim, self.action_dim,
+                                             gamma=self.gamma, step_decay=step_decay, **kwargs)
         if pt_file_path is not None:
             if agent_str == "PPO" or agent_str == "A2C":
                 self.agent.actor.load_state_dict(torch.load(pt_file_path))
@@ -376,9 +384,6 @@ if __name__ == "__main__":
     # experiment.set_agent("A2C", epsilon=0.0241, lamda=0.161, lr_critic=0.005984, lr_actor=0.00988946, max_grad_norm=1000,
     #                      actor_decay=0.9968, critic_decay=0.99755)
     # experiment.learning_loop_rollout(128, 128, plotting=True)
-    experiment = Learn(max_frames=5e5, gamma=0.99, verbose=True, max_epochs=1, seed=1, reward_type='PB',
-                       max_episodes=20000,
-                       save_locally=False)
-    experiment.set_agent("A2C", epsilon=0.2758, lamda=0.99, lr_critic=0.0003, lr_actor=0.0003, max_grad_norm=1000,
-                         actor_decay=1.0, critic_decay=1.0)
-    experiment.learning_loop_rollout(64, 64, plotting=True)
+    experiment = Learn(verbose=True)
+    experiment.set_agent("DuelDDQN")
+    experiment.learning_loop_offline(128, 8192, per_is=True)
