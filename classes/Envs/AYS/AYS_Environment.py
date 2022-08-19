@@ -104,7 +104,7 @@ class AYS_Environment(Env):
 
     def __init__(self, discount=0.99, t0=0, dt=1, reward_type='PB', max_steps=600, image_dir='./images/', run_number=0,
                  plot_progress=False, **kwargs):
-        self.management_cost = -0.001
+        self.management_cost = 0.01
         self.image_dir = image_dir
         self.run_number = run_number
         self.plot_progress = plot_progress
@@ -144,7 +144,7 @@ class AYS_Environment(Env):
         self.Y_SF = self._compactification(ays.boundary_parameters["W_SF"],
                                            self.X_MID[1])  # Social foundations as boundary
         self.S_LIMIT = 0
-        self.PB = [self.A_PB, self.Y_SF, 0]
+        self.PB = np.array([self.A_PB, self.Y_SF, 0])
 
         # print("Init AYS Environment!",
         #       "\nReward Type: " + reward_type,
@@ -167,7 +167,7 @@ class AYS_Environment(Env):
         if not self._inside_planetary_boundaries():
             self.final_state = True
 
-        if self.final_state and self.reward_type=="PB":
+        if self.final_state and (self.reward_type == "PB" or self.reward_type == "policy_cost"):
             reward += self.calculate_expected_final_reward()
 
         return self.state, reward, self.final_state, None
@@ -264,11 +264,9 @@ class AYS_Environment(Env):
         def policy_cost(action=0):
             """@Theo Wolf, we add a cost to using management options """
             if self._inside_planetary_boundaries():
-                reward = 0
+                reward = np.linalg.norm(self.state - self.PB)
             else:
-                reward = -1
-            if self._good_final_state():
-                reward = 1
+                reward = 0.
             if self.management_options[action] != 'default':
                 reward -= self.management_cost  # cost of using management
                 if self.management_options[action] == 'LG+ET':
@@ -683,9 +681,9 @@ class noisy_partially_observable_AYS(AYS_Environment):
 
 
 class noisy_AYS(AYS_Environment):
-    def __init__(self, noise_strength=1e-5, **kwargs):
+    def __init__(self, noise=1e-5, **kwargs):
         super(noisy_AYS, self).__init__(**kwargs)
-        self.noise = noise_strength
+        self.noise = noise
         self.counter = 1
 
     def reset(self):
@@ -694,9 +692,8 @@ class noisy_AYS(AYS_Environment):
         self.final_state = False
         self.t = self.t0
         self.counter += 1
-        if self.counter%100 == 0:
-            # self.noise *= 10
-            print(self.tau_S, self.tau_A, self.beta, self.sigma, self.rho, self.phi, self.eps)
+        if self.counter%1000 == 0:
+            self.noise *= 10
         # new method
         self.inject_noise()
 
@@ -705,13 +702,13 @@ class noisy_AYS(AYS_Environment):
     def inject_noise(self):
         """We inject noise into the parameters of the system to add interpretability"""
 
-        self.tau_A = 50 * np.random.normal(1, self.noise)
-        self.tau_A = 50 * np.random.normal(1, self.noise)
-        self.beta = 8.57e-5 * np.random.normal(1, self.noise)
-        self.sigma = 147 * np.random.normal(1, self.noise)
-        self.rho = 2. * np.random.normal(1, self.noise)
-        self.phi = 4.7e10 * np.random.normal(1, self.noise)
-        self.eps = 147 * np.random.normal(1, self.noise)
+        self.tau_A = 50 * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
+        self.tau_S = 50 * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
+        self.beta = 8.57e-5 * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
+        self.sigma = 147 * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
+        self.rho = 2. * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
+        self.phi = 4.7e10 * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
+        self.eps = 147 * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
 
         # derived parameters
         self.sigma_ET = self.sigma * 0.5 ** (1 / self.rho)

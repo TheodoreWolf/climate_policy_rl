@@ -183,18 +183,24 @@ class PER_IS_ReplayBuffer:
         return self.size
 
 
-def feature_importance(agent_net, buffer, n_points, v=False):
+def feature_importance(agent_net, buffer, n_points, v=False, scalar=False):
     features = ["Atmospheric Carbon", "Economic Output", "Renewable Stock"]
     if v:
-        features = features + ["dA", "dY", "dS"]
+        features = ["A", "Y", "S", "dA", "dY", "dS"]
 
     data = buffer.sample(n_points)[0]
 
     explainer = shap.DeepExplainer(agent_net,
                                    torch.from_numpy(data).float().to(DEVICE))
     shap_q_values = explainer.shap_values(torch.from_numpy(data).float().to(DEVICE))
-    shap_values = np.array(np.max(shap_q_values, axis=0))
-    shap.summary_plot(shap_values, features=data, feature_names=features)
+    if scalar:
+        shap_values = np.array(shap_q_values)
+    else:
+        shap_values = np.array(np.max(shap_q_values, axis=0))
+    shap.summary_plot(shap_values,
+                        features=data,
+                        feature_names=features,
+                        plot_type='violin', show=False, sort=False)
 
 
 def plot_end_state_matrix(results):
@@ -208,7 +214,6 @@ def plot_end_state_matrix(results):
     plt.legend(handles=patches, loc='upper left', bbox_to_anchor=(1, 1.))
     plt.ylabel("Y")
     plt.xlabel("A")
-    plt.show()
 
 
 def plot_action_matrix(results):
@@ -222,4 +227,3 @@ def plot_action_matrix(results):
     plt.legend(handles=patches, loc='upper left', bbox_to_anchor=(1, 1.))
     plt.ylabel("Y")
     plt.xlabel("A")
-    plt.show()
