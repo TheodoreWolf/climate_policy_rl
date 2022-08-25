@@ -20,7 +20,7 @@ def numpy_to_cuda(numpy_array):
 class DQN:
     """DQN implementation with epsilon greedy actions selection"""
 
-    def __init__(self, state_dim, action_dim, gamma=0.99, lr=0.00263, tau=0.11, rho=0.60, epsilon=1., polyak=False,
+    def __init__(self, state_dim, action_dim, gamma=0.99, lr=0.002357, tau=0.0877, rho=0.7052, epsilon=1., polyak=False,
                  decay=0.5, step_decay=50000):
 
         # create simple networks that output Q-values, both target and policy are identical
@@ -102,6 +102,9 @@ class DQN:
         loss.backward()
         self.optimizer.step()
 
+        # scheduler step
+        self.scheduler.step()
+
         # to copy the policy parameters to the target network
         self.copy_nets()
         # we return the loss for logging and the TDs for Prioritised Experience Replay
@@ -132,7 +135,7 @@ class DQN:
 class DuelDDQN(DQN):
     """Implementation of DuelDDQN, inspired by RAINBOW"""
 
-    def __init__(self, state_dim, action_dim, lr=0.00765, rho=0.76, tau=0.55, **kwargs):
+    def __init__(self, state_dim, action_dim, lr=0.004133, rho=0.5307, tau=0.01856, **kwargs):
         super(DuelDDQN, self).__init__(state_dim, action_dim, lr=lr, rho=rho, tau=tau, **kwargs)
         # create duelling networks that output Q-values, both target and policy are identical
         self.target_net = self.create_net(state_dim, action_dim, duelling=True).to(DEVICE)
@@ -158,8 +161,8 @@ class DuelDDQN(DQN):
 class A2C:
     """Implementation of the Advantage Actor Critic with entropy regularisation"""
 
-    def __init__(self, state_dim, action_dim, gamma=0.99, epsilon=0.0241, lamda=0.161,
-                 lr_actor=0.00989, lr_critic=0.00598, step_decay=50000, decay=0.5,
+    def __init__(self, state_dim, action_dim, gamma=0.99, epsilon=0.001672, lamda=0.,
+                 lr_actor=0.0002052, lr_critic=0.002627, step_decay=50000, decay=0.5,
                  max_grad_norm=100):
 
         self.lr_actor = lr_actor
@@ -219,12 +222,13 @@ class A2C:
         value_loss.backward()
         nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
         self.critic_optim.step()
+        self.critic_scheduler.step()
 
         self.actor_optim.zero_grad()
         policy_loss.backward()
         nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
         self.actor_optim.step()
-
+        self.actor_scheduler.step()
         return policy_loss, value_loss
 
     def policy_loss(self, advantages, new_log_probs, log_probs, entropies):
@@ -266,7 +270,7 @@ class A2C:
 
 
 class PPO(A2C):
-    def __init__(self, *args, clip=0.26, lr_actor=0.000713, lr_critic=0.00953, epsilon=0.0213, lamda=0.81,
+    def __init__(self, *args, clip=0.2762, lr_actor=0.0003633, lr_critic=0.004864, epsilon=0.0001411, lamda=0.9441,
                  max_grad_norm=100, **kwargs):
         super(PPO, self).__init__(*args, lr_actor=lr_actor, lr_critic=lr_critic, epsilon=epsilon, lamda=lamda,
                                   max_grad_norm=max_grad_norm, **kwargs)

@@ -8,21 +8,22 @@ except:
     from .Learning import agents as ag
     from .Learning import utils as utils
     from .learn_class import Learn
-import random
-import numpy as np
-import os
 import torch
-import wandb
 
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 class Noisy_Learn(Learn):
-    def __init__(self, noise=1e-5, **kwargs):
+    def __init__(self, noise=1e-5, periodic_increase=500, markov=False, **kwargs):
         super(Noisy_Learn, self).__init__(**kwargs)
-        self.env = noisy_AYS(noise_strength=noise)
-        self.group_name = "Noisy"
+        if not markov:
+            self.env = noisy_AYS(noise_strength=noise, periodic_increase=periodic_increase, **kwargs)
+            self.group_name = "Noisy"
+        else:
+            self.env = Noisy_Markov(noise_strength=noise, **kwargs)
+            self.state_dim = len(self.env.observation_space) * 2
+            self.group_name = "Noisy_Markov"
 
 
 class Markov_Learn(Learn):
@@ -35,7 +36,7 @@ class Markov_Learn(Learn):
 
 class Simple_Learn(Learn):
     def __init__(self, cost=0.001, **kwargs):
-        super(Simple_Learn, self).__init__(reward_type="policy_cost", **kwargs)
+        super(Simple_Learn, self).__init__(reward_type="simple", **kwargs)
         self.env.management_cost = cost
         self.group_name = "Simple"
 

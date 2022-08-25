@@ -104,7 +104,7 @@ class AYS_Environment(Env):
 
     def __init__(self, discount=0.99, t0=0, dt=1, reward_type='PB', max_steps=600, image_dir='./images/', run_number=0,
                  plot_progress=False, **kwargs):
-        self.management_cost = 0.01
+        self.management_cost = 0.5
         self.image_dir = image_dir
         self.run_number = run_number
         self.plot_progress = plot_progress
@@ -140,9 +140,9 @@ class AYS_Environment(Env):
         """
         This values define the planetary boundaries of the AYS model
         """
-        self.A_PB = self._compactification(ays.boundary_parameters["A_PB"], self.X_MID[0])  # Planetary boundary
+        self.A_PB = self._compactification(ays.boundary_parameters["A_PB"], self.X_MID[0])  # Planetary boundary: 0.5897
         self.Y_SF = self._compactification(ays.boundary_parameters["W_SF"],
-                                           self.X_MID[1])  # Social foundations as boundary
+                                           self.X_MID[1])  # Social foundations as boundary: 0.3636
         self.S_LIMIT = 0
         self.PB = np.array([self.A_PB, self.Y_SF, 0])
 
@@ -268,13 +268,15 @@ class AYS_Environment(Env):
             else:
                 reward = 0.
             if self.management_options[action] != 'default':
-                reward -= self.management_cost  # cost of using management
+                #reward -= self.management_cost  # cost of using management
+                reward *= self.management_cost
                 if self.management_options[action] == 'LG+ET':
-                    reward -= self.management_cost  # we add more cost for using both actions
+                    # reward -= self.management_cost  # we add more cost for using both actions
+                    reward *= self.management_cost
             return reward
 
         def simple(action=0):
-            """@Theo Wolf, much simpler scheme that achieves what we actually want: go green"""
+            """@Theo Wolf, much simpler scheme that aims for what we actually want: go green"""
             if self._inside_planetary_boundaries():
                 reward = 0
             else:
@@ -395,7 +397,7 @@ class AYS_Environment(Env):
             return Basins.OUT_OF_TIME
 
     def get_plot_state_list(self):
-        return self.state.tolist()
+        return self.state.tolist()[:3]
 
     def prepare_action_set(self, state):
         return np.arange(len(self.action_space) - 1)
@@ -681,10 +683,11 @@ class noisy_partially_observable_AYS(AYS_Environment):
 
 
 class noisy_AYS(AYS_Environment):
-    def __init__(self, noise=1e-5, **kwargs):
+    def __init__(self, noise=1e-5, periodic_increase=500, **kwargs):
         super(noisy_AYS, self).__init__(**kwargs)
         self.noise = noise
-        self.counter = 1
+        self.period = periodic_increase
+        self.counter = 0
 
     def reset(self):
         """We change the reset such that every episode has ever so slightly different parameters"""
@@ -692,9 +695,8 @@ class noisy_AYS(AYS_Environment):
         self.final_state = False
         self.t = self.t0
         self.counter += 1
-        if self.counter%1000 == 0:
+        if self.counter % self.period == 0:
             self.noise *= 10
-        # new method
         self.inject_noise()
 
         return self.state
@@ -704,8 +706,9 @@ class noisy_AYS(AYS_Environment):
 
         self.tau_A = 50 * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
         self.tau_S = 50 * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
-        self.beta = 8.57e-5 * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
-        self.sigma = 147 * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
+        self.beta = 0.03 * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
+        self.theta = 8.57e-5 * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
+        self.sigma = 4e12 * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
         self.rho = 2. * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
         self.phi = 4.7e10 * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
         self.eps = 147 * np.clip(np.random.normal(1, self.noise), 0.5, 1.5)
@@ -728,6 +731,19 @@ class velocity_AYS(AYS_Environment):
         self.t = self.t0
         velocity_state = self.get_velocity_state(0)
         return velocity_state
+
+    def reset_for_state(self, state=None):
+        if state is None:
+            self.start_state = self.state = np.array(self.current_state)
+            self.velocity = np.zeros(3)
+            self.final_state = False
+            self.t = self.t0
+            state = self.get_velocity_state(0)
+        else:
+            self.start_state = self.state = state = np.array(state)
+        self.final_state = False
+        self.t = self.t0
+        return state
 
     def step(self, action: int) -> np.array:
         """
@@ -767,3 +783,23 @@ class velocity_AYS(AYS_Environment):
 
         self.velocity += np.array([dA, dY, dS])
         return np.hstack((self.state, self.velocity))
+
+
+class Noisy_Markov(velocity_AYS, noisy_AYS):
+    def __init__(self, **kwargs):
+        super(velocity_AYS, self).__init__(**kwargs)
+        super(Noisy_Markov, self).__init__(**kwargs)
+
+    def reset(self):
+        """We change the reset such that every episode has ever so slightly different parameters"""
+        self.state = np.array(self.current_state_region_StartPoint())
+        self.velocity = np.zeros(3)
+        self.final_state = False
+        self.t = self.t0
+        self.inject_noise()
+        velocity_state = self.get_velocity_state(0)
+        return velocity_state
+
+if __name__=="__main__":
+    a = AYS_Environment()
+    a = 1

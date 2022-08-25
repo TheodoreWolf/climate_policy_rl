@@ -67,6 +67,7 @@ class Learn:
 
         # initialise recursive variables
         episode_reward = 0
+        step_counter = 0
         next_state = torch.Tensor(self.env.reset()).to(DEVICE)
         next_done = torch.zeros(1).to(DEVICE)
 
@@ -88,10 +89,10 @@ class Learn:
                 dones[i] = next_done
                 obs[i] = next_state
 
-                if next_done:
+                if next_done or step_counter > self.env.max_steps:
                     # append data
                     self.append_data(episode_reward)
-
+                    step_counter = 0
                     episode_reward = 0
                     next_state = torch.Tensor(self.env.reset()).to(DEVICE)
 
@@ -115,8 +116,9 @@ class Learn:
                 values[i] = value
                 next_state, next_done = torch.Tensor(next_state).to(DEVICE), torch.Tensor([done]).to(DEVICE)
 
-                # update episode reward
+                # update episode reward and step counter
                 episode_reward += reward
+                step_counter += 1
 
             # get the value
             with torch.no_grad():
@@ -138,10 +140,6 @@ class Learn:
                                                             advantages[batch_idx], returns[batch_idx]))
                     wandb.log({"pol_loss": pol_loss, "val_loss": val_loss, "loss": val_loss + pol_loss}) \
                         if self.wandb_save else None
-
-            # scheduler steps
-            self.agent.critic_scheduler.step()
-            self.agent.actor_scheduler.step()
 
             # if we spend a long time in the simulation
             if self.data['frame_idx'] > self.max_frames or self.data['episodes'] > self.max_episodes:
@@ -167,7 +165,7 @@ class Learn:
             np.save('run_data.npy', self.data)
 
     def learning_loop_offline(self, batch_size, buffer_size, per_is, notebook=False,
-                              plotting=False, alpha=0.345, beta=0.236, config=None):
+                              plotting=False, alpha=0.213, beta=0.7389, config=None):
         """For DQN-based agents which can be updated offline which is more data efficient """
 
         self.data['frame_idx'] = self.data['episodes'] = 0
@@ -221,13 +219,9 @@ class Learn:
                 if done:
                     break
 
-            # causes warning messages if we call the scheduler before updating
-            if len(self.memory) > batch_size:
-                self.agent.scheduler.step()
             # bookkeeping
             self.append_data(episode_reward)
-            if self.data["frame_idx"] > 150:
-                self.agent.scheduler.step()
+
             # for notebook
             if notebook and episodes % 10 == 0:
                 utils.plot(self.data)
@@ -257,6 +251,9 @@ class Learn:
         step_decay = int(self.max_frames/(self.decay_number+1))
         self.agent = eval("ag." + agent_str)(self.state_dim, self.action_dim,
                                              gamma=self.gamma, step_decay=step_decay, **kwargs)
+        if agent_str == "A2C":
+            self.max_epochs = 1
+
         if pt_file_path is not None:
             if agent_str == "PPO" or agent_str == "A2C":
                 self.agent.actor.load_state_dict(torch.load(pt_file_path))
@@ -283,7 +280,7 @@ class Learn:
               self.env.which_final_state().name) \
             if self.verbose else None
 
-    def test_agent(self, n_points=100, max_steps=10000, s_default=0.5) -> plt:
+    def test_agent(self, n_points=100, max_steps=1000, s_default=0.5) -> plt:
         """Test the agent on different initial conditions to see if it can escape"""
         grid_size = int(np.sqrt(n_points))
         results = np.zeros((n_points, 1))
@@ -359,7 +356,7 @@ class Learn:
 
     def sample_states(self, samples):
         """Sample states from the environment"""
-        self.samples = utils.ReplayBuffer(samples)
+        self.samples = utils.ReplayBuffer(int(1e6))
         while len(self.samples) < samples:
             state = self.env.reset()
             done = False
@@ -379,11 +376,10 @@ if __name__ == "__main__":
     #                      actor_decay=1., critic_decay=1.)
     # experiment.learning_loop_rollout(128, 128, plotting=False)
 
-    # experiment = Learning(max_frames=5e5, gamma=0.894, verbose=True, max_epochs=1, seed=0, reward_type='PB', max_episodes=20000,
-    #                       save_locally=False)
-    # experiment.set_agent("A2C", epsilon=0.0241, lamda=0.161, lr_critic=0.005984, lr_actor=0.00988946, max_grad_norm=1000,
-    #                      actor_decay=0.9968, critic_decay=0.99755)
-    # experiment.learning_loop_rollout(128, 128, plotting=True)
-    experiment = Learn(verbose=True)
-    experiment.set_agent("DuelDDQN", lr=0.071)
-    experiment.learning_loop_offline(128, 8192, per_is=True)
+    experiment = Learn(max_frames=5e5, gamma=0.99, verbose=True, max_epochs=1, seed=0, reward_type='PB', max_episodes=20000,
+                          save_locally=False, decay_number=0)
+    experiment.set_agent("A2C", epsilon=0.1, lamda=0., lr_critic=0.005984, lr_actor=0.00988946, )
+    experiment.learning_loop_rollout(128, 128, plotting=True)
+    # experiment = Learn(verbose=True)
+    # experiment.set_agent("DuelDDQN", lr=0.071)
+    # experiment.learning_loop_offline(128, 8192, per_is=True)
