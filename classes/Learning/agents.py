@@ -1,5 +1,3 @@
-from abc import ABC
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -15,6 +13,21 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def numpy_to_cuda(numpy_array):
     return torch.from_numpy(numpy_array).float().to(DEVICE)
+
+
+class Random:
+    def __init__(self, state_dim, action_dim, **kwargs):
+        self.action_dim = action_dim
+        self.state_dim = state_dim
+
+    def get_action(self, state):
+        return np.random.choice(self.action_dim)
+
+    def update(self, batch_sample):
+        return None, None
+
+    def __str__(self):
+        return "Random"
 
 
 class DQN:
@@ -258,11 +271,11 @@ class A2C:
     def get_action(self, state, testing=True):
         """For plotting trajectories"""
         preferences = self.actor(numpy_to_cuda(state))
-        if testing:
-            action = torch.argmax(preferences)
-        else:
-            probs = Categorical(logits=preferences)
-            action = probs.sample()
+        # if testing:
+        #     action = torch.argmax(preferences)
+        # else:
+        probs = Categorical(logits=preferences)
+        action = probs.sample()
         return action.item()
 
     def __str__(self):
@@ -270,7 +283,7 @@ class A2C:
 
 
 class PPO(A2C):
-    def __init__(self, *args, clip=0.2762, lr_actor=0.0003633, lr_critic=0.004864, epsilon=0.0001411, lamda=0.9441,
+    def __init__(self, *args, clip=0.2762, lr_actor=0.0003633, lr_critic=0.004864, epsilon=0.0001411, lamda=0.8845,
                  max_grad_norm=100, **kwargs):
         super(PPO, self).__init__(*args, lr_actor=lr_actor, lr_critic=lr_critic, epsilon=epsilon, lamda=lamda,
                                   max_grad_norm=max_grad_norm, **kwargs)

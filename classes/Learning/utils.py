@@ -184,7 +184,7 @@ class PER_IS_ReplayBuffer:
 
 
 def feature_importance(agent_net, buffer, n_points, v=False, scalar=False):
-    features = ["Atmospheric Carbon", "Economic Output", "Renewable Stock"]
+    features = ["A", "Y", "S"]
     if v:
         features = ["A", "Y", "S", "dA", "dY", "dS"]
 
@@ -196,7 +196,7 @@ def feature_importance(agent_net, buffer, n_points, v=False, scalar=False):
     if scalar:
         shap_values = np.array(shap_q_values)
     else:
-        shap_values = np.array(np.max(shap_q_values, axis=0))
+        shap_values = np.array(np.sum(shap_q_values, axis=0))
     shap.summary_plot(shap_values,
                         features=data,
                         feature_names=features,
@@ -207,13 +207,13 @@ def plot_end_state_matrix(results):
     t = 1 # alpha value
     size = int(np.sqrt(len(results)))
     cmap = {1: [0., 0., 0., t], 2: [0., 1.0, 0., t], 3: [1.0, 0.1, 0.1, t], 4: [1., 1., 0., t]}
-    labels = {1: 'Black_FP', 2: 'Green_FP', 3: 'A_PB', 4: 'Y_SF'}
+    labels = {1: r'$Black_{FP}$', 2: r'$Green_{FP}$', 3: r'$A_{PB}$', 4: r'$Y_{SF}$'}
     arrayShow = np.array([[cmap[i] for i in j] for j in results.reshape(size, size)])
     patches = [mpatches.Patch(color=cmap[i], label=labels[i]) for i in cmap]
     plt.imshow(arrayShow, extent=(0.45, 0.55, 0.55, 0.45))
     plt.legend(handles=patches, loc='upper left', bbox_to_anchor=(1, 1.))
-    plt.ylabel("Y")
-    plt.xlabel("A")
+    plt.ylabel("A")
+    plt.xlabel("Y")
 
 
 def plot_action_matrix(results):
@@ -225,5 +225,5 @@ def plot_action_matrix(results):
     patches = [mpatches.Patch(color=cmap[i], label=labels[i]) for i in cmap]
     plt.imshow(arrayShow, extent=(0.45, 0.55, 0.55, 0.45))
     plt.legend(handles=patches, loc='upper left', bbox_to_anchor=(1, 1.))
-    plt.ylabel("Y")
-    plt.xlabel("A")
+    plt.ylabel("A")
+    plt.xlabel("Y")

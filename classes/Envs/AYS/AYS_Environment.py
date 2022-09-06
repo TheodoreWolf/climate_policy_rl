@@ -12,7 +12,7 @@ import sys
 import numpy as np
 from scipy.integrate import odeint
 from . import ays_model as ays
-from . import ays_general
+# from . import ays_general
 from .Basins import Basins
 from gym import Env
 
@@ -487,7 +487,7 @@ class AYS_Environment(Env):
         final_state = self.which_final_state().name
         if fname is not None:
             plt.savefig(fname)
-        plt.show()
+        #plt.show()
 
         return final_state
 
@@ -697,6 +697,7 @@ class noisy_AYS(AYS_Environment):
         self.counter += 1
         if self.counter % self.period == 0:
             self.noise *= 10
+            print("Noise now:", self.noise)
         self.inject_noise()
 
         return self.state
@@ -800,6 +801,3 @@ class Noisy_Markov(velocity_AYS, noisy_AYS):
         velocity_state = self.get_velocity_state(0)
         return velocity_state
 
-if __name__=="__main__":
-    a = AYS_Environment()
-    a = 1

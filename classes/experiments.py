@@ -14,6 +14,11 @@ import torch
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
+class PB_Learn(Learn):
+    def __init__(self, **kwargs):
+        super(PB_Learn, self).__init__(**kwargs)
+
+
 class Noisy_Learn(Learn):
     def __init__(self, noise=1e-5, periodic_increase=500, markov=False, **kwargs):
         super(Noisy_Learn, self).__init__(**kwargs)

@@ -302,32 +302,42 @@ class Learn:
                 state = next_state
         utils.plot_end_state_matrix(results)
 
-    def initialisation_values(self, n_points=100, s_default=0.5) -> plt:
+    def initialisation_values(self, n_points=100, s_default=0.5, v=False) -> plt:
         """Create a plot of the state values at different initialisations"""
         grid_size = int(np.sqrt(n_points))
         test_states = np.zeros((n_points, self.state_dim))
         for a in range(grid_size):
             for y in range(grid_size):
-                test_states[a * grid_size + y] = \
-                    np.array([0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default])
+                if v:
+                    test_states[a * grid_size + y] = \
+                        np.array([0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default, 0., 0., 0.])
+                else:
+                    test_states[a * grid_size + y] = \
+                        np.array([0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default])
+
         if str(self.agent) == "A2C" or str(self.agent) == "PPO":
             results = self.agent.critic(torch.from_numpy(test_states).float().to(DEVICE))
         else:
             results = torch.max((self.agent.target_net(torch.from_numpy(test_states).float().to(DEVICE))), dim=1)[0]
 
         plt.imshow(results.view(grid_size, grid_size).detach().cpu(), extent=(0.45, 0.55, 0.55, 0.45))
-        plt.ylabel("Y")
-        plt.xlabel("A")
+        plt.ylabel("A")
+        plt.xlabel("Y")
         plt.colorbar()
 
-    def initialisation_actions(self, n_points=100, s_default=0.5) -> plt:
+    def initialisation_actions(self, n_points=100, s_default=0.5, v=False) -> plt:
         """Make a plot of the best action to do at initialisation"""
         grid_size = int(np.sqrt(n_points))
         test_states = np.zeros((n_points, self.state_dim))
         for a in range(grid_size):
             for y in range(grid_size):
-                test_states[a * grid_size + y] = \
-                    np.array([0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default])
+                if v:
+                    test_states[a * grid_size + y] = \
+                        np.array([0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default, 0., 0., 0.])
+                else:
+                    test_states[a * grid_size + y] = \
+                        np.array([0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default])
+
         if str(self.agent) == "A2C" or str(self.agent) == "PPO":
             results = torch.argmax(self.agent.actor(torch.from_numpy(test_states).float().to(DEVICE)), dim=1)
         else:
@@ -337,7 +347,7 @@ class Learn:
     def feature_plots(self, samples, buffer=None, v=False, actor=False) -> plt:
         """To make feature importance plots"""
         if buffer is None:
-            self.sample_states(samples)
+            self.sample_states(samples*3)
         else:
             self.samples = buffer
         if str(self.agent) == "A2C" or str(self.agent) == "PPO":
