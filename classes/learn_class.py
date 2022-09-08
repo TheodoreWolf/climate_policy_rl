@@ -56,6 +56,32 @@ class Learn:
                      'final_point': []
                      }
 
+    def train(self, notebook=True):
+        """Train with the optimal parameters, made for easy use in Jupyter/Colab notebooks"""
+
+        if str(self.agent) == "A2C":
+            self.decay_number = 4
+            self.agent.step_decay = int(self.max_frames/(self.decay_number+1))
+            self.learning_loop_rollout(32, 32, notebook=notebook)
+
+        elif str(self.agent) == "PPO":
+            self.decay_number = 200
+            self.agent.step_decay = int(self.max_frames / (self.decay_number + 1))
+            self.learning_loop_rollout(256, 2048, notebook=notebook)
+
+        elif str(self.agent) == "DQN":
+            self.decay_number = 6
+            self.agent.step_decay = int(self.max_frames / (self.decay_number + 1))
+            self.learning_loop_offline(256, 32768, per_is=False, notebook=notebook)
+
+        elif str(self.agent) == "DuelDDQN":
+            self.decay_number = 10
+            self.agent.step_decay = int(self.max_frames / (self.decay_number + 1))
+            self.learning_loop_offline(128, 32768, per_is=True, notebook=notebook)
+
+        else:
+            print('No agent set, set an agent with the "set_agent" method.')
+
     def learning_loop_rollout(self, batch_size, buffer_size, notebook=False, plotting=False, config=None):
         """For PPO and A2C, these can't be updated fully offline"""
 
@@ -249,8 +275,12 @@ class Learn:
         """Set the agent to the environment with specific parameters or weights"""
 
         step_decay = int(self.max_frames/(self.decay_number+1))
-        self.agent = eval("ag." + agent_str)(self.state_dim, self.action_dim,
-                                             gamma=self.gamma, step_decay=step_decay, **kwargs)
+        try:
+            self.agent = eval("ag." + agent_str)(self.state_dim, self.action_dim,
+                                                 gamma=self.gamma, step_decay=step_decay, **kwargs)
+        except:
+            print('Not a valid agent, try "Random", "A2C", "DQN", "PPO" or "DuelDDQN".')
+
         if agent_str == "A2C":
             self.max_epochs = 1
 
@@ -347,7 +377,7 @@ class Learn:
     def feature_plots(self, samples, buffer=None, v=False, actor=False) -> plt:
         """To make feature importance plots"""
         if buffer is None:
-            self.sample_states(samples*3)
+            self.sample_states(samples*4)
         else:
             self.samples = buffer
         if str(self.agent) == "A2C" or str(self.agent) == "PPO":

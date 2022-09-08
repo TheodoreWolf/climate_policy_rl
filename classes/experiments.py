@@ -20,13 +20,13 @@ class PB_Learn(Learn):
 
 
 class Noisy_Learn(Learn):
-    def __init__(self, noise=1e-5, periodic_increase=500, markov=False, **kwargs):
+    def __init__(self, noise=1e-5, periodic_increase=500, markov=False, fixed_test=False, **kwargs):
         super(Noisy_Learn, self).__init__(**kwargs)
         if not markov:
-            self.env = noisy_AYS(noise_strength=noise, periodic_increase=periodic_increase, **kwargs)
+            self.env = noisy_AYS(noise_strength=noise, periodic_increase=periodic_increase, fixed=fixed_test, **kwargs)
             self.group_name = "Noisy"
         else:
-            self.env = Noisy_Markov(noise_strength=noise, **kwargs)
+            self.env = Noisy_Markov(noise_strength=noise, fixed=fixed_test, **kwargs)
             self.state_dim = len(self.env.observation_space) * 2
             self.group_name = "Noisy_Markov"
 

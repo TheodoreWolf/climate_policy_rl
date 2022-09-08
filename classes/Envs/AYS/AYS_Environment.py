@@ -683,11 +683,18 @@ class noisy_partially_observable_AYS(AYS_Environment):
 
 
 class noisy_AYS(AYS_Environment):
-    def __init__(self, noise=1e-5, periodic_increase=500, **kwargs):
+    def __init__(self, noise=1e-5, periodic_increase=500, fixed=False, **kwargs):
         super(noisy_AYS, self).__init__(**kwargs)
         self.noise = noise
         self.period = periodic_increase
         self.counter = 0
+
+        self.fixed = fixed
+        if self.fixed:
+            np.random.seed(0)
+            self.noise = 1e-4
+            self.inject_noise()
+            self.print_params()
 
     def reset(self):
         """We change the reset such that every episode has ever so slightly different parameters"""
@@ -698,7 +705,8 @@ class noisy_AYS(AYS_Environment):
         if self.counter % self.period == 0:
             self.noise *= 10
             print("Noise now:", self.noise)
-        self.inject_noise()
+        if not self.fixed:
+            self.inject_noise()
 
         return self.state
 
@@ -717,6 +725,10 @@ class noisy_AYS(AYS_Environment):
         # derived parameters
         self.sigma_ET = self.sigma * 0.5 ** (1 / self.rho)
         self.beta_LG = self.beta/2
+
+    def print_params(self):
+        param_list = [self.tau_A, self.tau_S, self.beta, self.theta, self.sigma, self.rho, self.phi, self.eps]
+        return param_list
 
 
 class velocity_AYS(AYS_Environment):
