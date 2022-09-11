@@ -691,8 +691,6 @@ class noisy_AYS(AYS_Environment):
 
         self.fixed = fixed
         if self.fixed:
-            np.random.seed(0)
-            self.noise = 1e-4
             self.inject_noise()
             self.print_params()
 
@@ -702,11 +700,11 @@ class noisy_AYS(AYS_Environment):
         self.final_state = False
         self.t = self.t0
         self.counter += 1
-        if self.counter % self.period == 0:
-            self.noise *= 10
-            print("Noise now:", self.noise)
         if not self.fixed:
             self.inject_noise()
+            if self.counter % self.period == 0:
+                self.noise *= 10
+                print("Noise now:", self.noise)
 
         return self.state
 

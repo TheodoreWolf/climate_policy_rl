@@ -42,24 +42,6 @@ class Net(nn.Module):
         return q_values
 
 
-class ActionInNet(nn.Module):
-    """Outputs Q-values for each action"""
-    def __init__(self, state_dim, action_dim, hidden_dim=256):
-        super(ActionInNet, self).__init__()
-
-        self.layer = nn.Sequential(nn.Linear(state_dim, hidden_dim), nn.ReLU(),
-                                   nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-                                   )
-
-        self.q = nn.Linear(hidden_dim, action_dim)
-
-    def forward(self, obs):
-        l = self.layer(obs)
-        q_values = self.q(l)
-
-        return q_values
-
-
 class DuellingNet(nn.Module):
     """Outputs duelling Q-values for each action"""
     def __init__(self, state_dim, action_dim, hidden_dim=256):

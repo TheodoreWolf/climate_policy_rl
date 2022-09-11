@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import wandb
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -61,7 +62,7 @@ class Learn:
 
         if str(self.agent) == "A2C":
             self.decay_number = 4
-            self.agent.step_decay = int(self.max_frames/(self.decay_number+1))
+            self.agent.step_decay = int(self.max_frames / (self.decay_number + 1))
             self.learning_loop_rollout(32, 32, notebook=notebook)
 
         elif str(self.agent) == "PPO":
@@ -170,7 +171,7 @@ class Learn:
             # if we spend a long time in the simulation
             if self.data['frame_idx'] > self.max_frames or self.data['episodes'] > self.max_episodes:
                 break
-        success_rate = self.data["final_point"].count("GREEN_FP")/self.data["episodes"]
+        success_rate = self.data["final_point"].count("GREEN_FP") / self.data["episodes"]
         print("Success rate: ", round(success_rate, 3))
         # log data
         if self.wandb_save:
@@ -200,7 +201,8 @@ class Learn:
                    group=self.group_name) \
             if self.wandb_save else None
         # initiate memory
-        self.memory = utils.PER_IS_ReplayBuffer(buffer_size, alpha=alpha, state_dim=self.state_dim) if per_is else utils.ReplayBuffer(buffer_size)
+        self.memory = utils.PER_IS_ReplayBuffer(buffer_size, alpha=alpha,
+                                                state_dim=self.state_dim) if per_is else utils.ReplayBuffer(buffer_size)
 
         for episodes in range(self.max_episodes):
 
@@ -274,7 +276,7 @@ class Learn:
     def set_agent(self, agent_str, pt_file_path=None, second_path=None, **kwargs):
         """Set the agent to the environment with specific parameters or weights"""
 
-        step_decay = int(self.max_frames/(self.decay_number+1))
+        step_decay = int(self.max_frames / (self.decay_number + 1))
         try:
             self.agent = eval("ag." + agent_str)(self.state_dim, self.action_dim,
                                                  gamma=self.gamma, step_decay=step_decay, **kwargs)
@@ -331,6 +333,25 @@ class Learn:
                     break
                 state = next_state
         utils.plot_end_state_matrix(results)
+        return np.mean(results == 2)
+
+    def test_reward(self, episodes):
+
+        rewards = []
+        for episode in tqdm(range(episodes)):
+            ep_reward = 0
+            state = self.env.reset()
+
+            for steps in range(600):
+                action = self.agent.get_action(state, testing=True)
+                next_state, reward, done, _ = self.env.step(action)
+                ep_reward += reward
+                if done:
+                    rewards.append(ep_reward)
+                    break
+                state = next_state
+
+        return rewards
 
     def initialisation_values(self, n_points=100, s_default=0.5, v=False) -> plt:
         """Create a plot of the state values at different initialisations"""
@@ -340,7 +361,8 @@ class Learn:
             for y in range(grid_size):
                 if v:
                     test_states[a * grid_size + y] = \
-                        np.array([0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default, 0., 0., 0.])
+                        np.array(
+                            [0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default, 0., 0., 0.])
                 else:
                     test_states[a * grid_size + y] = \
                         np.array([0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default])
@@ -363,7 +385,8 @@ class Learn:
             for y in range(grid_size):
                 if v:
                     test_states[a * grid_size + y] = \
-                        np.array([0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default, 0., 0., 0.])
+                        np.array(
+                            [0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default, 0., 0., 0.])
                 else:
                     test_states[a * grid_size + y] = \
                         np.array([0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default])
@@ -377,7 +400,7 @@ class Learn:
     def feature_plots(self, samples, buffer=None, v=False, actor=False) -> plt:
         """To make feature importance plots"""
         if buffer is None:
-            self.sample_states(samples*4)
+            self.sample_states(samples * 4)
         else:
             self.samples = buffer
         if str(self.agent) == "A2C" or str(self.agent) == "PPO":
@@ -408,16 +431,18 @@ class Learn:
 
         return self.samples
 
+
 if __name__ == "__main__":
-    a=1
+    a = 1
     # experiment = Learning(max_frames=5e5, verbose=True, max_epochs=1, seed=2, reward_type='PB', max_episodes=20000,
     #                       save_locally=True)
     # experiment.set_agent("A2C", epsilon=0.002, lamda=0.81, lr_critic=0.004, lr_actor=0.0013, max_grad_norm=100,
     #                      actor_decay=1., critic_decay=1.)
     # experiment.learning_loop_rollout(128, 128, plotting=False)
 
-    experiment = Learn(max_frames=5e5, gamma=0.99, verbose=True, max_epochs=1, seed=0, reward_type='PB', max_episodes=20000,
-                          save_locally=False, decay_number=0)
+    experiment = Learn(max_frames=5e5, gamma=0.99, verbose=True, max_epochs=1, seed=0, reward_type='PB',
+                       max_episodes=20000,
+                       save_locally=False, decay_number=0)
     experiment.set_agent("A2C", epsilon=0.1, lamda=0., lr_critic=0.005984, lr_actor=0.00988946, )
     experiment.learning_loop_rollout(128, 128, plotting=True)
     # experiment = Learn(verbose=True)
