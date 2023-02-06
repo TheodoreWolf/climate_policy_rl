@@ -225,7 +225,7 @@ class Learn:
                 if len(self.memory) > batch_size:
                     # if we are using prioritised experience replay buffer with importance sampling
                     if per_is:
-                        beta = 1 - (1 - beta) * np.exp(-0.05 * episodes)  # we converge beta to 1
+                        beta = 1 - (1 - beta) * np.exp(-0.05 * episodes)  # we converge beta to 1, using episodes is flawed, use frames instead
                         sample = self.memory.sample(batch_size, beta)
                         loss, tds = self.agent.update(
                             (sample['obs'], sample['action'], sample['reward'], sample['next_obs'], sample['done']),
@@ -335,14 +335,21 @@ class Learn:
         utils.plot_end_state_matrix(results)
         return np.mean(results == 2)
 
-    def test_reward(self, episodes):
+    def test_reward(self, n_points, s_default=0.5, max_steps=600):
+
+        test_states = np.zeros((n_points, self.state_dim))
+        grid_size = int(np.sqrt(n_points))
+
+        for a in range(grid_size):
+            for y in range(grid_size):
+                test_states[a * grid_size + y] = \
+                    np.array([0.45 + a * 1 / (grid_size * 10), 0.45 + y * 1 / (grid_size * 10), s_default])
 
         rewards = []
-        for episode in tqdm(range(episodes)):
+        for i in range(len(test_states)):
+            state = self.env.reset_for_state(test_states[i])
             ep_reward = 0
-            state = self.env.reset()
-
-            for steps in range(600):
+            for steps in range(max_steps):
                 action = self.agent.get_action(state, testing=True)
                 next_state, reward, done, _ = self.env.step(action)
                 ep_reward += reward
@@ -351,7 +358,7 @@ class Learn:
                     break
                 state = next_state
 
-        return rewards
+        return np.mean(rewards)
 
     def initialisation_values(self, n_points=100, s_default=0.5, v=False) -> plt:
         """Create a plot of the state values at different initialisations"""
