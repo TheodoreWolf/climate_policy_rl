@@ -1,17 +1,15 @@
-try:
-    from Envs.AYS.AYS_Environment import AYS_Environment
-    import Learning.agents as ag
-    import Learning.utils as utils
-except:
-    from .Envs.AYS.AYS_Environment import AYS_Environment
-    from .Learning import agents as ag
-    from .Learning import utils as utils
 import random
+
 import numpy as np
 import torch
 import wandb
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+
+from envs.AYS.AYS_Environment import *
+from learn import agents as ag
+from learn import utils
+from learn_class import Learn
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -126,8 +124,6 @@ class Learn:
                     # for notebook
                     if notebook and self.data['episodes'] % 10 == 0:
                         utils.plot(self.data)
-                        if plotting and self.data['episodes'] % 500 == 0:
-                            utils.plot_test_trajectory(self.env, self.agent)
 
                 # get action and other stuff
                 with torch.no_grad():
@@ -184,7 +180,6 @@ class Learn:
         # show final trajectory
         if plotting:
             utils.plot(self.data)
-            utils.plot_test_trajectory(self.env, self.agent)
 
         if self.save_locally:
             torch.save(self.agent.actor.state_dict(), "policy_net.pt")
@@ -253,8 +248,6 @@ class Learn:
             # for notebook
             if notebook and episodes % 10 == 0:
                 utils.plot(self.data)
-                if plotting and episodes % 200 == 0:
-                    utils.plot_test_trajectory(self.env, self.agent)
 
             # if we spend too long in the simulation
             if self.data['frame_idx'] > self.max_frames:
@@ -271,7 +264,6 @@ class Learn:
 
         if plotting:
             utils.plot(self.data)
-            utils.plot_test_trajectory(self.env, self.agent)
 
     def set_agent(self, agent_str, pt_file_path=None, second_path=None, **kwargs):
         """Set the agent to the environment with specific parameters or weights"""

@@ -1,12 +1,9 @@
-
-from envs.AYS.AYS_Environment import *
-from learn import agents as ag
-from learn import utils as us
-from learn_class import Learn
+import os
 
 import torch
-import os
-print(os.getcwd()) 
+
+from envs.AYS.AYS_Environment import *
+from learn_class import Learn
 
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -45,12 +42,6 @@ class Simple_Learn(Learn):
 
 
 if __name__ == "__main__":
-    # exp = Markov_Learning(max_episodes=1000, verbose=True)
-    # exp.set_agent("PPO")
-    # exp.learning_loop_rollout(32, 1024)
-    # experiment = Simple_Learning( cost=0.00, wandb_save=True,)
-    # experiment.set_agent("DuelDDQN")
-    # experiment.learning_loop_offline(128, 2**13, per_is=True)
     experiment = Markov_Learn(wandb_save=False, reward_type="PB", verbose=True)
     experiment.set_agent("DuelDDQN")
     experiment.learning_loop_offline(128, 2**13, per_is=True)
