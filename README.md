@@ -1,3 +1,9 @@
-# Reinforcement Learn for optimal policy trajectories in World-Earth
-Use of RL for estimating optimal climate policies in World-Earth Systems. Part of my MSc thesis in Machine Learning at UCL.
+# Reinforcement Learn in climate models
+We use Reinforcement Learning to probe different climate models. 
+
+All learning algorithms are made with pytorch (CUDA is recommended). 
+
+Publication in review.
+
+
 

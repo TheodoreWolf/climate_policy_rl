@@ -1,13 +1,9 @@
-try:
-    from Envs.AYS.AYS_Environment import *
-    import Learning.agents as ag
-    import Learning.utils as utils
-    from learn_class import Learn
-except:
-    from .Envs.AYS.AYS_Environment import *
-    from .Learning import agents as ag
-    from .Learning import utils as utils
-    from .learn_class import Learn
+
+from envs.AYS.AYS_Environment import *
+from learn import agents as ag
+from learn import utils as us
+from learn_class import Learn
+
 import torch
 import os
 print(os.getcwd()) 

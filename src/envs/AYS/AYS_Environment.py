@@ -21,8 +21,8 @@ import matplotlib.pyplot as plt
 
 from matplotlib.font_manager import FontProperties
 from matplotlib.offsetbox import AnchoredText
-from .plots.AYS_3D_figures import create_figure
-from .plots import AYS_3D_figures as ays_plot
+from AYS_3D_figures import create_figure
+import AYS_3D_figures as ays_plot
 import os
 
 SMALL_SIZE = 12
