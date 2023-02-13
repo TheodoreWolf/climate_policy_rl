@@ -351,7 +351,7 @@ class Learn:
 
         return np.mean(rewards)
 
-    def initialisation_values(self, n_points=100, s_default=0.5, v=False) -> plt:
+    def initialisation_values(self, n_points=100, s_default=0.5, v=False):
         """Create a plot of the state values at different initialisations"""
         grid_size = int(np.sqrt(n_points))
         test_states = np.zeros((n_points, self.state_dim))
@@ -375,7 +375,7 @@ class Learn:
         plt.xlabel("Y")
         plt.colorbar()
 
-    def initialisation_actions(self, n_points=100, s_default=0.5, v=False) -> plt:
+    def initialisation_actions(self, n_points=100, s_default=0.5, v=False):
         """Make a plot of the best action to do at initialisation"""
         grid_size = int(np.sqrt(n_points))
         test_states = np.zeros((n_points, self.state_dim))
@@ -395,7 +395,7 @@ class Learn:
             results = torch.argmax((self.agent.target_net(torch.from_numpy(test_states).float().to(DEVICE))), dim=1)
         utils.plot_action_matrix(results.detach().cpu().numpy())
 
-    def feature_plots(self, samples, buffer=None, v=False, actor=False) -> plt:
+    def feature_plots(self, samples, buffer=None, v=False, actor=False):
         """To make feature importance plots"""
         if buffer is None:
             self.sample_states(samples * 4)

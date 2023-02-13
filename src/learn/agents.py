@@ -73,7 +73,7 @@ class DQN:
         return net
 
     @torch.no_grad()
-    def get_action(self, state: np.array, testing=False) -> np.array:
+    def get_action(self, state: np.ndarray, testing=False):
         """We select actions according to epsilon-greedy policy"""
         self.t += 1
         if np.random.uniform() > self.epsilon(self.t) or testing:
